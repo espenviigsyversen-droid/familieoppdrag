@@ -213,6 +213,16 @@ button:disabled {
   padding: 18px;
 }
 
+.danger-zone {
+  margin-top: 18px;
+  border-color: #ffd0dc;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.danger-zone h2 {
+  margin-top: 0;
+}
+
 .profile-card {
   display: flex;
   flex-direction: column;

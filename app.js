@@ -773,8 +773,12 @@ function adultSettings() {
       </form>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
-        <button class="btn warning" data-action="seed-demo">Nullstill til startdata</button>
       </div>
+    </section>
+    <section class="panel danger-zone">
+      <h2>Sikkerhet</h2>
+      <p class="muted">Nullstilling sletter appdata og legger inn startoppsettet på nytt. Brukes bare hvis dere vil begynne helt på nytt.</p>
+      <button class="btn warning" data-action="seed-demo">Nullstill til startdata</button>
     </section>
   `;
 }
@@ -1282,11 +1286,19 @@ app.addEventListener("click", (event) => {
     setDeviceProfile("adult");
     render();
   }
-  if (action === "seed-demo" && confirm("Vil du nullstille appen til startdata?")) {
-    localStorage.removeItem(STORAGE_KEY);
-    state = loadState();
-    saveState();
-    render();
+  if (action === "seed-demo") {
+    const typed = prompt('Skriv "Nullstill" for å låse opp nullstilling.');
+    if (typed !== "Nullstill") {
+      showToast("Nullstilling ble avbrutt.");
+      return;
+    }
+    if (confirm("Er du helt sikker på at du vil nullstille appen til startdata? Dette kan ikke angres.")) {
+      localStorage.removeItem(STORAGE_KEY);
+      state = loadState();
+      saveState();
+      showToast("Appen er nullstilt til startdata.");
+      render();
+    }
   }
   if (action === "export-data") {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
