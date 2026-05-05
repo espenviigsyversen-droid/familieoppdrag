@@ -124,6 +124,8 @@ let view = {
   gate: null
 };
 
+let previousView = { mode: view.mode, childId: view.childId, childTab: view.childTab };
+
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
@@ -489,7 +491,7 @@ function renderPinModal() {
         </div>
         <div class="actions" style="margin-top:14px">
           <button class="btn" type="submit">Åpne</button>
-          <button class="btn secondary" type="button" data-action="home">Avbryt</button>
+          <button class="btn secondary" type="button" data-action="cancel-adult-login">Avbryt</button>
         </div>
       </form>
     </div>
@@ -1251,6 +1253,22 @@ function goHome() {
   render();
 }
 
+function rememberCurrentView() {
+  previousView = {
+    mode: view.mode,
+    childId: view.childId,
+    childTab: view.childTab
+  };
+}
+
+function restorePreviousView() {
+  view.mode = previousView.mode || "home";
+  view.childId = previousView.childId || null;
+  view.childTab = previousView.childTab || "tasks";
+  view.gate = null;
+  render();
+}
+
 function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
@@ -1291,8 +1309,12 @@ app.addEventListener("click", (event) => {
     render();
   }
   if (action === "adult-login") {
+    rememberCurrentView();
     view.mode = "adult";
     render();
+  }
+  if (action === "cancel-adult-login") {
+    restorePreviousView();
   }
   if (action === "lock-adult") {
     view.adultUnlocked = false;
