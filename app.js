@@ -120,7 +120,8 @@ let view = {
   adultTab: "overview",
   adultUnlocked: false,
   editingTaskId: null,
-  editingRewardId: null
+  editingRewardId: null,
+  gate: null
 };
 
 const app = document.querySelector("#app");
@@ -157,7 +158,9 @@ function saveState() {
 }
 
 function render() {
-  if (view.mode === "adult") {
+  if (view.gate) {
+    renderPinGate();
+  } else if (view.mode === "adult") {
     renderAdult();
   } else if (view.mode === "child" && view.childId) {
     renderChild(view.childId);
@@ -484,6 +487,35 @@ function renderPinModal() {
         <div class="actions" style="margin-top:14px">
           <button class="btn" type="submit">Åpne</button>
           <button class="btn secondary" type="button" data-action="home">Avbryt</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function renderPinGate() {
+  app.innerHTML = `
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">🔐</div>
+        <div>
+          <p class="eyebrow">Voksen-PIN</p>
+          <h1>Bytt profil</h1>
+        </div>
+      </div>
+      <button class="btn secondary" data-action="cancel-gate">Tilbake</button>
+    </header>
+    <div class="modal-backdrop">
+      <form class="modal" data-form="pin-gate">
+        <h2>PIN kreves</h2>
+        <p class="muted">Denne enheten er satt til en fast barneprofil.</p>
+        <div class="field">
+          <label for="gatePin">PIN</label>
+          <input id="gatePin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus>
+        </div>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn" type="submit">Åpne profilvalg</button>
+          <button class="btn secondary" type="button" data-action="cancel-gate">Avbryt</button>
         </div>
       </form>
     </div>
@@ -1200,6 +1232,22 @@ function setDeviceProfile(profile) {
   showToast("Standardprofil er lagret for denne enheten.");
 }
 
+function requiresPinForHome() {
+  const profile = localStorage.getItem(DEVICE_PROFILE_KEY);
+  return view.mode === "child" && profile === `child:${view.childId}` && !view.adultUnlocked;
+}
+
+function goHome() {
+  if (requiresPinForHome()) {
+    view.gate = { type: "home", returnMode: view.mode, returnChildId: view.childId };
+    render();
+    return;
+  }
+  view.mode = "home";
+  view.childId = null;
+  render();
+}
+
 function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
@@ -1227,8 +1275,10 @@ app.addEventListener("click", (event) => {
   const { action, child, task, reward, id, tab } = button.dataset;
 
   if (action === "home") {
-    view.mode = "home";
-    view.childId = null;
+    goHome();
+  }
+  if (action === "cancel-gate") {
+    view.gate = null;
     render();
   }
   if (action === "open-child") {
@@ -1320,6 +1370,18 @@ app.addEventListener("submit", async (event) => {
       view.adultUnlocked = true;
       view.adultTab = "overview";
       showToast("Voksenmodus åpnet.");
+      render();
+    } else {
+      showToast("Feil PIN.");
+    }
+  }
+  if (form.dataset.form === "pin-gate") {
+    const hash = await hashPin(new FormData(form).get("pin"));
+    if (hash === state.parentPinHash) {
+      view.gate = null;
+      view.mode = "home";
+      view.childId = null;
+      showToast("Profilvalg åpnet.");
       render();
     } else {
       showToast("Feil PIN.");
