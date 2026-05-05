@@ -197,6 +197,9 @@ function renderHome() {
         <div class="pill-row">
           <span class="pill">${deviceProfileLabel()}</span>
         </div>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn secondary" data-action="set-device-home">📌 Bruk profilvalg som standard</button>
+        </div>
       </div>
     </section>
     <section class="profile-grid">
@@ -1214,10 +1217,10 @@ async function hashPin(pin) {
 
 function deviceProfileLabel() {
   const profile = localStorage.getItem(DEVICE_PROFILE_KEY);
-  if (!profile) return "Ingen valgt";
+  if (!profile || profile === "home") return "Profilvalg";
   if (profile === "adult") return "Voksen/familieoversikt";
   if (profile.startsWith("child:")) return getChild(profile.replace("child:", ""))?.name || "Ukjent";
-  return "Ingen valgt";
+  return "Profilvalg";
 }
 
 function cloudStatusLabel() {
@@ -1334,6 +1337,10 @@ app.addEventListener("click", (event) => {
   }
   if (action === "set-device-adult") {
     setDeviceProfile("adult");
+    render();
+  }
+  if (action === "set-device-home") {
+    setDeviceProfile("home");
     render();
   }
   if (action === "seed-demo") {
