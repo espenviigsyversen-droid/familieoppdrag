@@ -911,6 +911,7 @@ function adultSettings() {
       </form>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
+        <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
       </div>
     </section>
     <section class="panel">
@@ -1166,6 +1167,22 @@ function hideChildReward(id) {
   saveState();
   showToast("Belønningen er fjernet fra listen.");
   render();
+}
+
+async function refreshApp() {
+  showToast("Oppdaterer appen ...");
+  try {
+    if ("serviceWorker" in navigator) {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration) await registration.update();
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => key.startsWith("familieoppdrag-")).map((key) => caches.delete(key)));
+    }
+  } finally {
+    window.setTimeout(() => window.location.reload(), 500);
+  }
 }
 
 function awardPoints(childId, amount, description, sourceId = null, type = "manual") {
@@ -1567,6 +1584,9 @@ app.addEventListener("click", (event) => {
   if (action === "set-device-home") {
     setDeviceProfile("home");
     render();
+  }
+  if (action === "refresh-app") {
+    refreshApp();
   }
   if (action === "reset-levels" && confirm("Vil du tilbakestille nivåene til standardoppsettet?")) {
     state.levels = DEFAULT_LEVELS;
