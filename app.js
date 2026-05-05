@@ -491,6 +491,9 @@ function childRewardHistoryList(items) {
                 <span class="pill ${redemption.status === "fulfilled" ? "done" : ["rejected", "refunded"].includes(redemption.status) ? "rejected" : "pending"}">${rewardStatusLabel(redemption.status)}</span>
               </div>
             </div>
+            <div class="actions">
+              <button class="btn secondary" data-action="hide-child-reward" data-id="${redemption.id}">Fjern</button>
+            </div>
           </article>
         `;
       }).join("")}
@@ -1155,6 +1158,16 @@ function refundReward(id) {
   render();
 }
 
+function hideChildReward(id) {
+  const redemption = state.redemptions.find((item) => item.id === id);
+  if (!redemption) return;
+  redemption.hiddenFromChild = true;
+  redemption.hiddenFromChildAt = new Date().toISOString();
+  saveState();
+  showToast("Belønningen er fjernet fra listen.");
+  render();
+}
+
 function awardPoints(childId, amount, description, sourceId = null, type = "manual") {
   const child = getChild(childId);
   child.pointsBalance += amount;
@@ -1303,7 +1316,7 @@ function approvedRewardRedemptions(childId = null) {
 
 function completedRewardRedemptions(childId) {
   return state.redemptions
-    .filter((item) => ["fulfilled", "approved", "rejected", "refunded"].includes(item.status) && item.childId === childId)
+    .filter((item) => ["fulfilled", "approved", "rejected", "refunded"].includes(item.status) && item.childId === childId && !item.hiddenFromChild)
     .sort((a, b) => new Date(b.fulfilledAt || b.refundedAt || b.approvedAt || b.rejectedAt || b.requestedAt) - new Date(a.fulfilledAt || a.refundedAt || a.approvedAt || a.rejectedAt || a.requestedAt));
 }
 
@@ -1526,6 +1539,7 @@ app.addEventListener("click", (event) => {
   if (action === "reject-reward") rejectReward(id);
   if (action === "fulfill-reward") fulfillReward(id);
   if (action === "refund-reward" && confirm("Vil du refundere denne belønningen?")) refundReward(id);
+  if (action === "hide-child-reward" && confirm("Er du sikker på at du vil fjerne denne belønningen fra listen?")) hideChildReward(id);
   if (action === "edit-task") {
     view.editingTaskId = id;
     render();
