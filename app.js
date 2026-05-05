@@ -1,6 +1,29 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
+const FIREBASE_ENABLED = true;
+const FAMILY_ID = "familieoppdrag";
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAMPfQ9gX9rbuvcPsVjYVtq5IT_orjDBPs",
+  authDomain: "home-tasks-app-18de3.firebaseapp.com",
+  projectId: "home-tasks-app-18de3",
+  storageBucket: "home-tasks-app-18de3.firebasestorage.app",
+  messagingSenderId: "253720858709",
+  appId: "1:253720858709:web:62bd1844be04ee76c384dc"
+};
+
+const cloud = {
+  enabled: FIREBASE_ENABLED,
+  ready: false,
+  status: "Kobler til Firestore ...",
+  error: "",
+  docRef: null,
+  setDoc: null,
+  serverTimestamp: null,
+  unsubscribe: null,
+  saveTimer: null,
+  applyingRemote: false
+};
 
 const LEVELS = [
   { min: 0, name: "Ny hjelper" },
@@ -130,6 +153,7 @@ function loadState() {
 function saveState() {
   state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  queueCloudSave();
 }
 
 function render() {
@@ -720,10 +744,11 @@ function adultSettings() {
   return `
     <section class="panel">
       <h2>Innstillinger</h2>
-      <p class="muted">Denne prototypen lagrer data lokalt i nettleseren. Datamodellen følger Firestore-strukturen fra kravspesifikasjonen, slik at neste steg kan bli sky-synkronisering.</p>
+      <p class="muted">Appen lagrer lokalt i nettleseren og synker med Firestore når tilkoblingen er aktiv.</p>
       <div class="pill-row">
         <span class="pill">PIN: 1234</span>
         <span class="pill">Standard: ${deviceProfileLabel()}</span>
+        <span class="pill ${cloud.ready ? "done" : cloud.error ? "rejected" : "pending"}">${cloudStatusLabel()}</span>
       </div>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
@@ -1102,6 +1127,13 @@ function deviceProfileLabel() {
   return "Ingen valgt";
 }
 
+function cloudStatusLabel() {
+  if (!cloud.enabled) return "Lokal lagring";
+  if (cloud.ready) return "Synker med Firestore";
+  if (cloud.error) return "Lokal fallback";
+  return cloud.status;
+}
+
 function setDeviceProfile(profile) {
   localStorage.setItem(DEVICE_PROFILE_KEY, profile);
   showToast("Standardprofil er lagret for denne enheten.");
@@ -1195,6 +1227,7 @@ app.addEventListener("click", (event) => {
   if (action === "seed-demo" && confirm("Vil du nullstille appen til startdata?")) {
     localStorage.removeItem(STORAGE_KEY);
     state = loadState();
+    saveState();
     render();
   }
   if (action === "export-data") {
@@ -1235,6 +1268,101 @@ app.addEventListener("submit", async (event) => {
   }
 });
 
+async function initFirebaseSync() {
+  if (!cloud.enabled) return;
+  try {
+    const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged }, { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp }] = await Promise.all([
+      import("https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js"),
+      import("https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js")
+    ]);
+
+    const firebaseApp = initializeApp(FIREBASE_CONFIG);
+    const auth = getAuth(firebaseApp);
+    const db = getFirestore(firebaseApp);
+    cloud.docRef = doc(db, "families", FAMILY_ID, "appState", "current");
+    cloud.setDoc = setDoc;
+    cloud.serverTimestamp = serverTimestamp;
+
+    await new Promise((resolve, reject) => {
+      const stop = onAuthStateChanged(auth, (user) => {
+        if (user) {
+          stop();
+          resolve(user);
+        }
+      }, reject);
+      signInAnonymously(auth).catch(reject);
+    });
+
+    const snapshot = await getDoc(cloud.docRef);
+    if (snapshot.exists() && snapshot.data().state) {
+      cloud.applyingRemote = true;
+      state = normalizeRemoteState(snapshot.data().state);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      cloud.applyingRemote = false;
+    } else {
+      await writeCloudState();
+    }
+
+    cloud.unsubscribe = onSnapshot(cloud.docRef, (remote) => {
+      if (!remote.exists() || !remote.data().state || cloud.applyingRemote) return;
+      const remoteState = normalizeRemoteState(remote.data().state);
+      if (remoteState.updatedAt && remoteState.updatedAt !== state.updatedAt) {
+        cloud.applyingRemote = true;
+        state = remoteState;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        cloud.applyingRemote = false;
+        render();
+      }
+    });
+
+    cloud.ready = true;
+    cloud.status = "Synker med Firestore";
+    cloud.error = "";
+    render();
+  } catch (error) {
+    cloud.ready = false;
+    cloud.error = error?.message || "Kunne ikke koble til Firestore";
+    console.warn("Firestore sync unavailable:", error);
+    render();
+  }
+}
+
+function normalizeRemoteState(remoteState) {
+  return {
+    ...loadState(),
+    ...remoteState,
+    children: remoteState.children || [],
+    tasks: remoteState.tasks || [],
+    completions: remoteState.completions || [],
+    rewards: remoteState.rewards || [],
+    redemptions: remoteState.redemptions || [],
+    transactions: remoteState.transactions || [],
+    history: remoteState.history || []
+  };
+}
+
+function queueCloudSave() {
+  if (!cloud.enabled || !cloud.ready || cloud.applyingRemote || !cloud.docRef) return;
+  window.clearTimeout(cloud.saveTimer);
+  cloud.saveTimer = window.setTimeout(() => {
+    writeCloudState().catch((error) => {
+      cloud.error = error?.message || "Kunne ikke lagre i Firestore";
+      console.warn("Firestore save failed:", error);
+      render();
+    });
+  }, 350);
+}
+
+async function writeCloudState() {
+  if (!cloud.docRef || !cloud.setDoc) return;
+  await cloud.setDoc(cloud.docRef, {
+    familyId: FAMILY_ID,
+    state,
+    updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
+  }, { merge: true });
+}
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./service-worker.js").catch(() => {});
@@ -1250,3 +1378,4 @@ if (view.mode === "adult") {
 }
 
 render();
+initFirebaseSync();
