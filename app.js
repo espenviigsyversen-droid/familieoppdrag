@@ -488,7 +488,7 @@ function childRewardHistoryList(items) {
               <p class="muted">${rewardStatusText(redemption)}</p>
               <div class="pill-row">
                 <span class="pill">${redemption.cost} ⭐</span>
-                <span class="pill ${redemption.status === "fulfilled" ? "done" : redemption.status === "rejected" ? "rejected" : "pending"}">${rewardStatusLabel(redemption.status)}</span>
+                <span class="pill ${redemption.status === "fulfilled" ? "done" : ["rejected", "refunded"].includes(redemption.status) ? "rejected" : "pending"}">${rewardStatusLabel(redemption.status)}</span>
               </div>
             </div>
           </article>
@@ -654,6 +654,7 @@ function approvalCard(item) {
         <div class="actions">
           <button class="btn success" data-action="approve-reward" data-id="${item.id}">Godkjenn</button>
           <button class="btn danger" data-action="reject-reward" data-id="${item.id}">Avvis</button>
+          <button class="btn secondary" data-action="refund-reward" data-id="${item.id}">Refunder</button>
         </div>
       </article>
     `;
@@ -691,6 +692,7 @@ function approvedRewardCard(redemption) {
       </div>
       <div class="actions">
         <button class="btn success" data-action="fulfill-reward" data-id="${redemption.id}">Marker gjennomført</button>
+        <button class="btn secondary" data-action="refund-reward" data-id="${redemption.id}">Refunder</button>
       </div>
     </article>
   `;
@@ -1135,6 +1137,24 @@ function fulfillReward(id) {
   render();
 }
 
+function refundReward(id) {
+  const redemption = state.redemptions.find((item) => item.id === id);
+  if (!redemption || !["pending", "approved"].includes(redemption.status)) return;
+  const reward = getReward(redemption.rewardId);
+
+  if (redemption.status === "approved") {
+    awardPoints(redemption.childId, redemption.cost, `Refundert: ${reward.title}`, id, "refund");
+  } else {
+    addHistory(redemption.childId, "Belønning refundert", `Avbrutt: ${reward.title}`, 0);
+  }
+
+  redemption.status = "refunded";
+  redemption.refundedAt = new Date().toISOString();
+  saveState();
+  showToast("Belønningen er refundert.");
+  render();
+}
+
 function awardPoints(childId, amount, description, sourceId = null, type = "manual") {
   const child = getChild(childId);
   child.pointsBalance += amount;
@@ -1283,8 +1303,8 @@ function approvedRewardRedemptions(childId = null) {
 
 function completedRewardRedemptions(childId) {
   return state.redemptions
-    .filter((item) => ["fulfilled", "approved", "rejected"].includes(item.status) && item.childId === childId)
-    .sort((a, b) => new Date(b.fulfilledAt || b.approvedAt || b.rejectedAt || b.requestedAt) - new Date(a.fulfilledAt || a.approvedAt || a.rejectedAt || a.requestedAt));
+    .filter((item) => ["fulfilled", "approved", "rejected", "refunded"].includes(item.status) && item.childId === childId)
+    .sort((a, b) => new Date(b.fulfilledAt || b.refundedAt || b.approvedAt || b.rejectedAt || b.requestedAt) - new Date(a.fulfilledAt || a.refundedAt || a.approvedAt || a.rejectedAt || a.requestedAt));
 }
 
 function currentLevel(points) {
@@ -1344,7 +1364,8 @@ function rewardStatusLabel(status) {
     pending: "Venter",
     approved: "Godkjent",
     fulfilled: "Gjennomført",
-    rejected: "Avvist"
+    rejected: "Avvist",
+    refunded: "Refundert"
   }[status] || status;
 }
 
@@ -1352,6 +1373,7 @@ function rewardStatusText(redemption) {
   if (redemption.status === "fulfilled") return `Gjennomført ${formatDate(redemption.fulfilledAt)}.`;
   if (redemption.status === "approved") return `Godkjent ${formatDate(redemption.approvedAt)}. Venter på gjennomføring.`;
   if (redemption.status === "rejected") return `Avvist ${formatDate(redemption.rejectedAt)}.`;
+  if (redemption.status === "refunded") return `Refundert ${formatDate(redemption.refundedAt)}.`;
   return `Forespurt ${formatDate(redemption.requestedAt)}.`;
 }
 
@@ -1503,6 +1525,7 @@ app.addEventListener("click", (event) => {
   if (action === "approve-reward") approveReward(id);
   if (action === "reject-reward") rejectReward(id);
   if (action === "fulfill-reward") fulfillReward(id);
+  if (action === "refund-reward" && confirm("Vil du refundere denne belønningen?")) refundReward(id);
   if (action === "edit-task") {
     view.editingTaskId = id;
     render();
