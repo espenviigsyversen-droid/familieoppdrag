@@ -380,7 +380,9 @@ function childRewardView(child) {
   const rewards = state.rewards
     .filter((reward) => reward.active && reward.assignedChildren.includes(child.id))
     .sort((a, b) => a.cost - b.cost || a.title.localeCompare(b.title, "no"));
+  const approved = approvedRewardRedemptions(child.id);
   return `
+    ${approved.length ? childApprovedRewardsSection(approved) : ""}
     <section>
       <div class="section-title">
         <h2>Belønningsbutikk</h2>
@@ -388,6 +390,33 @@ function childRewardView(child) {
       </div>
       <div class="reward-grid">
         ${rewards.map((reward) => rewardCard(reward, child)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function childApprovedRewardsSection(redemptions) {
+  return `
+    <section>
+      <div class="section-title">
+        <h2>Godkjent, venter</h2>
+        <span class="small">${redemptions.length} stk.</span>
+      </div>
+      <div class="reward-grid">
+        ${redemptions.map((redemption) => {
+          const reward = getReward(redemption.rewardId);
+          return `
+            <article class="card reward-card">
+              <div class="reward-icon">${reward.icon}</div>
+              <h3>${reward.title}</h3>
+              <p class="muted">Godkjent av voksen. Venter på gjennomføring.</p>
+              <div class="pill-row">
+                <span class="pill">${redemption.cost} ⭐ brukt</span>
+                <span class="pill pending">Skal gjennomføres</span>
+              </div>
+            </article>
+          `;
+        }).join("")}
       </div>
     </section>
   `;
@@ -415,6 +444,7 @@ function rewardCard(reward, child) {
 
 function childMeView(child) {
   const history = state.history.filter((item) => item.childId === child.id).slice(0, 12);
+  const rewards = completedRewardRedemptions(child.id).slice(0, 12);
   return `
     <section class="dashboard-grid">
       <article class="card">
@@ -434,9 +464,37 @@ function childMeView(child) {
       </article>
     </section>
     <section>
+      <div class="section-title"><h2>Tidligere belønninger</h2></div>
+      ${childRewardHistoryList(rewards)}
+    </section>
+    <section>
       <div class="section-title"><h2>Historikk</h2></div>
       ${historyList(history, true)}
     </section>
+  `;
+}
+
+function childRewardHistoryList(items) {
+  if (!items.length) return `<div class="empty">Ingen belønninger brukt ennå.</div>`;
+  return `
+    <div class="task-list">
+      ${items.map((redemption) => {
+        const reward = getReward(redemption.rewardId);
+        return `
+          <article class="task-card">
+            <div class="task-icon">${reward.icon}</div>
+            <div>
+              <h3>${reward.title}</h3>
+              <p class="muted">${rewardStatusText(redemption)}</p>
+              <div class="pill-row">
+                <span class="pill">${redemption.cost} ⭐</span>
+                <span class="pill ${redemption.status === "fulfilled" ? "done" : redemption.status === "rejected" ? "rejected" : "pending"}">${rewardStatusLabel(redemption.status)}</span>
+              </div>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
   `;
 }
 
@@ -564,11 +622,18 @@ function adultOverview() {
 
 function adultApprovals() {
   const pending = pendingApprovals();
+  const approvedRewards = approvedRewardRedemptions();
   return `
     <section>
       <div class="section-title"><h2>Godkjenninger</h2><span class="small">${pending.length} venter</span></div>
       <div class="task-list">
         ${pending.length ? pending.map((item) => approvalCard(item)).join("") : `<div class="empty">Ingen godkjenninger venter.</div>`}
+      </div>
+    </section>
+    <section>
+      <div class="section-title"><h2>Godkjente belønninger</h2><span class="small">${approvedRewards.length} skal gjennomføres</span></div>
+      <div class="task-list">
+        ${approvedRewards.length ? approvedRewards.map((item) => approvedRewardCard(item)).join("") : `<div class="empty">Ingen godkjente belønninger venter på gjennomføring.</div>`}
       </div>
     </section>
   `;
@@ -605,6 +670,27 @@ function approvalCard(item) {
       <div class="actions">
         <button class="btn success" data-action="approve-task" data-id="${item.id}">Godkjenn</button>
         <button class="btn danger" data-action="reject-task" data-id="${item.id}">Avvis</button>
+      </div>
+    </article>
+  `;
+}
+
+function approvedRewardCard(redemption) {
+  const child = getChild(redemption.childId);
+  const reward = getReward(redemption.rewardId);
+  return `
+    <article class="task-card">
+      <div class="task-icon">${reward.icon}</div>
+      <div>
+        <h3>${child.name}: ${reward.title}</h3>
+        <p class="muted">Godkjent ${formatDate(redemption.approvedAt)}. Poengene er trukket, men belønningen er ikke markert gjennomført.</p>
+        <div class="pill-row">
+          <span class="pill">${redemption.cost} ⭐</span>
+          <span class="pill pending">Skal gjennomføres</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn success" data-action="fulfill-reward" data-id="${redemption.id}">Marker gjennomført</button>
       </div>
     </article>
   `;
@@ -1037,6 +1123,18 @@ function rejectReward(id) {
   render();
 }
 
+function fulfillReward(id) {
+  const redemption = state.redemptions.find((item) => item.id === id);
+  if (!redemption || redemption.status !== "approved") return;
+  const reward = getReward(redemption.rewardId);
+  redemption.status = "fulfilled";
+  redemption.fulfilledAt = new Date().toISOString();
+  addHistory(redemption.childId, "Belønning gjennomført", `Gjennomført: ${reward.title}`, 0);
+  saveState();
+  showToast("Belønningen er markert gjennomført.");
+  render();
+}
+
 function awardPoints(childId, amount, description, sourceId = null, type = "manual") {
   const child = getChild(childId);
   child.pointsBalance += amount;
@@ -1177,6 +1275,18 @@ function pendingApprovals() {
   ].sort((a, b) => new Date(a.completedAt || a.requestedAt) - new Date(b.completedAt || b.requestedAt));
 }
 
+function approvedRewardRedemptions(childId = null) {
+  return state.redemptions
+    .filter((item) => item.status === "approved" && (!childId || item.childId === childId))
+    .sort((a, b) => new Date(a.approvedAt || a.requestedAt) - new Date(b.approvedAt || b.requestedAt));
+}
+
+function completedRewardRedemptions(childId) {
+  return state.redemptions
+    .filter((item) => ["fulfilled", "approved", "rejected"].includes(item.status) && item.childId === childId)
+    .sort((a, b) => new Date(b.fulfilledAt || b.approvedAt || b.rejectedAt || b.requestedAt) - new Date(a.fulfilledAt || a.approvedAt || a.rejectedAt || a.requestedAt));
+}
+
 function currentLevel(points) {
   const levels = getLevels();
   return levels.slice().reverse().find((level) => points >= level.min) || levels[0];
@@ -1227,6 +1337,22 @@ function statusLabel(status) {
     rejected: "Avvist",
     reversed: "Angret"
   }[status] || status;
+}
+
+function rewardStatusLabel(status) {
+  return {
+    pending: "Venter",
+    approved: "Godkjent",
+    fulfilled: "Gjennomført",
+    rejected: "Avvist"
+  }[status] || status;
+}
+
+function rewardStatusText(redemption) {
+  if (redemption.status === "fulfilled") return `Gjennomført ${formatDate(redemption.fulfilledAt)}.`;
+  if (redemption.status === "approved") return `Godkjent ${formatDate(redemption.approvedAt)}. Venter på gjennomføring.`;
+  if (redemption.status === "rejected") return `Avvist ${formatDate(redemption.rejectedAt)}.`;
+  return `Forespurt ${formatDate(redemption.requestedAt)}.`;
 }
 
 function frequencyLabel(frequency) {
@@ -1376,6 +1502,7 @@ app.addEventListener("click", (event) => {
   if (action === "reject-task") rejectTask(id);
   if (action === "approve-reward") approveReward(id);
   if (action === "reject-reward") rejectReward(id);
+  if (action === "fulfill-reward") fulfillReward(id);
   if (action === "edit-task") {
     view.editingTaskId = id;
     render();
