@@ -367,7 +367,9 @@ function taskCard(item, childId) {
 }
 
 function childRewardView(child) {
-  const rewards = state.rewards.filter((reward) => reward.active && reward.assignedChildren.includes(child.id));
+  const rewards = state.rewards
+    .filter((reward) => reward.active && reward.assignedChildren.includes(child.id))
+    .sort((a, b) => a.cost - b.cost || a.title.localeCompare(b.title, "no"));
   return `
     <section>
       <div class="section-title">
@@ -658,7 +660,7 @@ function adultRewards() {
     <section>
       <div class="section-title"><h2>Belønninger</h2><span class="small">${state.rewards.length} totalt</span></div>
       <div class="reward-grid">
-        ${state.rewards.map((item) => `
+        ${state.rewards.slice().sort((a, b) => a.cost - b.cost || a.title.localeCompare(b.title, "no")).map((item) => `
           <article class="card">
             <div class="reward-icon">${item.icon}</div>
             <h3>${item.title}</h3>
