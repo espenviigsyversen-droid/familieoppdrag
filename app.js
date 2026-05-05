@@ -343,7 +343,8 @@ function categoryIcon(category) {
 function taskCard(item, childId) {
   const statusText = statusLabel(item.status);
   const done = ["completed", "approved", "pending"].includes(item.status);
-  const buttonText = item.task.requiresApproval ? "Jeg er ferdig" : "Ferdig!";
+  const canUndo = ["completed", "pending"].includes(item.status);
+  const buttonText = item.task.requiresApproval ? "Utført" : "Utført";
   return `
     <article class="task-card">
       <div class="task-icon">${item.task.icon}</div>
@@ -357,7 +358,9 @@ function taskCard(item, childId) {
         </div>
       </div>
       <div class="actions">
-        <button class="btn success" data-action="complete-task" data-child="${childId}" data-task="${item.task.id}" ${done ? "disabled" : ""}>${buttonText}</button>
+        ${canUndo
+          ? `<button class="btn secondary" data-action="undo-task" data-child="${childId}" data-completion="${item.completion.id}">Angre</button>`
+          : `<button class="btn success" data-action="complete-task" data-child="${childId}" data-task="${item.task.id}" ${done ? "disabled" : ""}>${buttonText}</button>`}
       </div>
     </article>
   `;
@@ -860,6 +863,42 @@ function rejectTask(id) {
   render();
 }
 
+function undoTaskCompletion(completionId) {
+  const completion = state.completions.find((item) => item.id === completionId);
+  if (!completion || !["completed", "pending"].includes(completion.status)) return;
+
+  const task = getTask(completion.taskId);
+  const child = getChild(completion.childId);
+  const pointsToReverse = completion.pointsAwarded || 0;
+
+  completion.status = "reversed";
+  completion.reversedAt = new Date().toISOString();
+
+  if (pointsToReverse > 0) {
+    child.pointsBalance -= pointsToReverse;
+    child.lifetimePoints = Math.max(0, child.lifetimePoints - pointsToReverse);
+    const transaction = {
+      id: crypto.randomUUID(),
+      childId: completion.childId,
+      type: "undo",
+      sourceId: completion.id,
+      description: `Angret: ${task.title}`,
+      pointsChange: -pointsToReverse,
+      balanceAfter: child.pointsBalance,
+      createdAt: new Date().toISOString(),
+      createdBy: completion.childId
+    };
+    state.transactions.push(transaction);
+    addHistory(completion.childId, "Angret oppgave", `Angret: ${task.title}`, -pointsToReverse, transaction.createdAt);
+  } else {
+    addHistory(completion.childId, "Angret oppgave", `Angret: ${task.title}`, 0);
+  }
+
+  saveState();
+  showToast("Oppgaven er angret.");
+  render();
+}
+
 function requestReward(childId, rewardId) {
   const child = getChild(childId);
   const reward = getReward(rewardId);
@@ -1195,6 +1234,7 @@ app.addEventListener("click", (event) => {
     render();
   }
   if (action === "complete-task") completeTask(child, task);
+  if (action === "undo-task") undoTaskCompletion(button.dataset.completion);
   if (action === "request-reward") requestReward(child, reward);
   if (action === "approve-task") approveTask(id);
   if (action === "reject-task") rejectTask(id);
