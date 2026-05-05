@@ -476,7 +476,6 @@ function renderPinModal() {
     <div class="modal-backdrop">
       <form class="modal" data-form="pin">
         <h2>PIN-kode</h2>
-        <p class="muted">Midlertidig PIN er 1234.</p>
         <div class="field">
           <label for="pin">PIN</label>
           <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus>
@@ -751,10 +750,26 @@ function adultSettings() {
       <h2>Innstillinger</h2>
       <p class="muted">Appen lagrer lokalt i nettleseren og synker med Firestore når tilkoblingen er aktiv.</p>
       <div class="pill-row">
-        <span class="pill">PIN: 1234</span>
         <span class="pill">Standard: ${deviceProfileLabel()}</span>
         <span class="pill ${cloud.ready ? "done" : cloud.error ? "rejected" : "pending"}">${cloudStatusLabel()}</span>
       </div>
+      <form data-form="pin-change" class="form-grid" style="margin-top:18px">
+        <div class="field">
+          <label>Nåværende PIN</label>
+          <input name="currentPin" type="password" inputmode="numeric" autocomplete="current-password" required>
+        </div>
+        <div class="field">
+          <label>Ny PIN</label>
+          <input name="newPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" required>
+        </div>
+        <div class="field">
+          <label>Gjenta ny PIN</label>
+          <input name="repeatPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" required>
+        </div>
+        <div class="actions" style="align-self:end">
+          <button class="btn" type="submit">Endre PIN</button>
+        </div>
+      </form>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
         <button class="btn warning" data-action="seed-demo">Nullstill til startdata</button>
@@ -1296,6 +1311,31 @@ app.addEventListener("submit", async (event) => {
     } else {
       showToast("Feil PIN.");
     }
+  }
+  if (form.dataset.form === "pin-change") {
+    const data = new FormData(form);
+    const currentHash = await hashPin(data.get("currentPin"));
+    const newPin = String(data.get("newPin") || "");
+    const repeatPin = String(data.get("repeatPin") || "");
+
+    if (currentHash !== state.parentPinHash) {
+      showToast("Nåværende PIN er feil.");
+      return;
+    }
+    if (newPin.length < 4) {
+      showToast("Ny PIN må ha minst 4 tegn.");
+      return;
+    }
+    if (newPin !== repeatPin) {
+      showToast("Ny PIN er ikke lik i begge feltene.");
+      return;
+    }
+
+    state.parentPinHash = await hashPin(newPin);
+    saveState();
+    form.reset();
+    showToast("PIN-koden er endret.");
+    render();
   }
   if (form.dataset.form === "task") saveTask(form);
   if (form.dataset.form === "reward") saveReward(form);
