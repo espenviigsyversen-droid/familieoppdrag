@@ -25,7 +25,7 @@ const cloud = {
   applyingRemote: false
 };
 
-const LEVELS = [
+const DEFAULT_LEVELS = [
   { min: 0, name: "Ny hjelper" },
   { min: 100, name: "Hushelt" },
   { min: 250, name: "Superhjelper" },
@@ -148,6 +148,7 @@ function loadState() {
     redemptions: [],
     transactions: [],
     history: [],
+    levels: DEFAULT_LEVELS,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -760,11 +761,20 @@ function adultChildren() {
           </div>
           <form data-form="points" class="form-grid" style="grid-template-columns:1fr;margin-top:14px">
             <input type="hidden" name="childId" value="${child.id}">
-            ${field("points", "Juster stjerner", 10, "number")}
+            ${field("points", "Juster saldo", 10, "number")}
             ${field("description", "Årsak", "Bonus fra voksen", "text")}
             <div class="actions">
               <button class="btn success" name="direction" value="plus">Gi</button>
               <button class="btn danger" name="direction" value="minus">Trekk</button>
+            </div>
+          </form>
+          <form data-form="lifetime-points" class="form-grid" style="grid-template-columns:1fr;margin-top:14px">
+            <input type="hidden" name="childId" value="${child.id}">
+            ${field("points", "Juster livstidspoeng", 100, "number")}
+            ${field("description", "Årsak", "Test/korreksjon av nivå", "text")}
+            <div class="actions">
+              <button class="btn secondary" name="direction" value="plus">Øk livstid</button>
+              <button class="btn secondary" name="direction" value="minus">Senk livstid</button>
             </div>
           </form>
         </article>
@@ -811,6 +821,28 @@ function adultSettings() {
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
       </div>
+    </section>
+    <section class="panel">
+      <h2>Nivåer</h2>
+      <p class="muted">Endre navn og hvor mange livstidspoeng som kreves for hvert nivå.</p>
+      <form data-form="levels" class="level-editor">
+        ${getLevels().map((level, index) => `
+          <div class="level-row">
+            <div class="field">
+              <label>Nivå ${index + 1}</label>
+              <input name="levelName" type="text" value="${escapeAttr(level.name)}" required>
+            </div>
+            <div class="field">
+              <label>Krever livstidspoeng</label>
+              <input name="levelMin" type="number" min="0" value="${level.min}" required>
+            </div>
+          </div>
+        `).join("")}
+        <div class="actions">
+          <button class="btn" type="submit">Lagre nivåer</button>
+          <button class="btn secondary" type="button" data-action="reset-levels">Tilbakestill nivåer</button>
+        </div>
+      </form>
     </section>
     <section class="panel danger-zone">
       <h2>Sikkerhet</h2>
@@ -1146,11 +1178,18 @@ function pendingApprovals() {
 }
 
 function currentLevel(points) {
-  return LEVELS.slice().reverse().find((level) => points >= level.min) || LEVELS[0];
+  const levels = getLevels();
+  return levels.slice().reverse().find((level) => points >= level.min) || levels[0];
 }
 
 function currentLevelIndex(points) {
-  return LEVELS.findIndex((level) => level.name === currentLevel(points).name) + 1;
+  return getLevels().findIndex((level) => level.name === currentLevel(points).name) + 1;
+}
+
+function getLevels() {
+  return (state.levels?.length ? state.levels : DEFAULT_LEVELS)
+    .map((level) => ({ min: Number(level.min) || 0, name: level.name || "Nivå" }))
+    .sort((a, b) => a.min - b.min);
 }
 
 function nextRewardMessage(child) {
@@ -1365,6 +1404,12 @@ app.addEventListener("click", (event) => {
     setDeviceProfile("home");
     render();
   }
+  if (action === "reset-levels" && confirm("Vil du tilbakestille nivåene til standardoppsettet?")) {
+    state.levels = DEFAULT_LEVELS;
+    saveState();
+    showToast("Nivåer er tilbakestilt.");
+    render();
+  }
   if (action === "seed-demo") {
     const typed = prompt('Skriv "Nullstill" for å låse opp nullstilling.');
     if (typed !== "Nullstill") {
@@ -1452,6 +1497,26 @@ app.addEventListener("submit", async (event) => {
     showToast("Stjerner justert.");
     render();
   }
+  if (form.dataset.form === "lifetime-points") {
+    const data = new FormData(form);
+    const child = getChild(data.get("childId"));
+    const direction = event.submitter?.value === "minus" ? -1 : 1;
+    const points = Math.abs(Number(data.get("points"))) * direction;
+    child.lifetimePoints = Math.max(0, child.lifetimePoints + points);
+    addHistory(child.id, "Livstidspoeng", data.get("description") || "Korrigert livstidspoeng", 0);
+    saveState();
+    showToast("Livstidspoeng justert.");
+    render();
+  }
+  if (form.dataset.form === "levels") {
+    const data = new FormData(form);
+    const names = data.getAll("levelName").map((name) => String(name).trim()).filter(Boolean);
+    const mins = data.getAll("levelMin").map((min) => Math.max(0, Number(min) || 0));
+    state.levels = names.map((name, index) => ({ name, min: mins[index] ?? 0 })).sort((a, b) => a.min - b.min);
+    saveState();
+    showToast("Nivåer er lagret.");
+    render();
+  }
 });
 
 async function initFirebaseSync() {
@@ -1524,7 +1589,8 @@ function normalizeRemoteState(remoteState) {
     rewards: remoteState.rewards || [],
     redemptions: remoteState.redemptions || [],
     transactions: remoteState.transactions || [],
-    history: remoteState.history || []
+    history: remoteState.history || [],
+    levels: remoteState.levels || DEFAULT_LEVELS
   };
 }
 

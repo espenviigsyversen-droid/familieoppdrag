@@ -199,6 +199,22 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.level-editor {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.level-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
 .card,
 .task-card,
 .panel {
@@ -628,7 +644,8 @@ th {
   .hero,
   .profile-grid,
   .dashboard-grid,
-  .form-grid {
+  .form-grid,
+  .level-row {
     grid-template-columns: 1fr;
   }
 
