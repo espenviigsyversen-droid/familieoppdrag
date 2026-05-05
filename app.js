@@ -352,7 +352,7 @@ function categoryIcon(category) {
 function taskCard(item, childId) {
   const statusText = statusLabel(item.status);
   const done = ["completed", "approved", "pending"].includes(item.status);
-  const canUndo = ["completed", "pending"].includes(item.status);
+  const canUndo = ["completed", "approved", "pending"].includes(item.status);
   const buttonText = item.task.requiresApproval ? "Utført" : "Utført";
   const waitingForAdult = item.status === "pending";
   return `
@@ -1044,7 +1044,7 @@ function rejectTask(id) {
 
 function undoTaskCompletion(completionId) {
   const completion = state.completions.find((item) => item.id === completionId);
-  if (!completion || !["completed", "pending"].includes(completion.status)) return;
+  if (!completion || !["completed", "approved", "pending"].includes(completion.status)) return;
 
   const task = getTask(completion.taskId);
   const child = getChild(completion.childId);
@@ -1257,7 +1257,7 @@ function findCompletion(task, childId) {
     .find((completion) => {
       if (completion.taskId !== task.id || completion.childId !== childId) return false;
       if (completion.status === "rejected" || completion.status === "reversed") return false;
-      if (task.repeatable) return completion.status === "pending";
+      if (task.repeatable) return ["pending", "approved", "completed"].includes(completion.status);
       if (task.frequency === "weekly") return completion.weekId === weekId();
       if (task.frequency === "once") return ["pending", "completed", "approved"].includes(completion.status);
       return completion.date === dateKey();
