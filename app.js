@@ -345,6 +345,7 @@ function taskCard(item, childId) {
   const done = ["completed", "approved", "pending"].includes(item.status);
   const canUndo = ["completed", "pending"].includes(item.status);
   const buttonText = item.task.requiresApproval ? "Utført" : "Utført";
+  const waitingForAdult = item.status === "pending";
   return `
     <article class="task-card">
       <div class="task-icon">${item.task.icon}</div>
@@ -358,9 +359,9 @@ function taskCard(item, childId) {
         </div>
       </div>
       <div class="actions">
-        ${canUndo
-          ? `<button class="btn secondary" data-action="undo-task" data-child="${childId}" data-completion="${item.completion.id}">Angre</button>`
-          : `<button class="btn success" data-action="complete-task" data-child="${childId}" data-task="${item.task.id}" ${done ? "disabled" : ""}>${buttonText}</button>`}
+        ${waitingForAdult ? `<button class="btn waiting" disabled>Sendt til voksen</button>` : ""}
+        ${canUndo ? `<button class="btn secondary" data-action="undo-task" data-child="${childId}" data-completion="${item.completion.id}">Angre</button>` : ""}
+        ${!canUndo ? `<button class="btn success" data-action="complete-task" data-child="${childId}" data-task="${item.task.id}" ${done ? "disabled" : ""}>${buttonText}</button>` : ""}
       </div>
     </article>
   `;
@@ -1065,7 +1066,7 @@ function findCompletion(task, childId) {
     .find((completion) => {
       if (completion.taskId !== task.id || completion.childId !== childId) return false;
       if (completion.status === "rejected" || completion.status === "reversed") return false;
-      if (task.repeatable) return false;
+      if (task.repeatable) return completion.status === "pending";
       if (task.frequency === "weekly") return completion.weekId === weekId();
       if (task.frequency === "once") return ["pending", "completed", "approved"].includes(completion.status);
       return completion.date === dateKey();

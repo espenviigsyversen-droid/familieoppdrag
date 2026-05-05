@@ -156,6 +156,13 @@ button:disabled {
   box-shadow: none;
 }
 
+.btn.waiting {
+  background: #fff0c2;
+  color: #6b4400;
+  border: 1px solid #ffd166;
+  box-shadow: none;
+}
+
 .btn.danger {
   background: var(--danger);
   color: #fff;
