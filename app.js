@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "18";
+const APP_VERSION = "19";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -188,7 +188,7 @@ function renderHome() {
     <section class="hero">
       <div class="hero-main">
         <h1>Dagens oppdrag</h1>
-        <p>Barna ser bare sine egne oppgaver og stjerner. Voksen kan styre alt fra et eget område med PIN.</p>
+        <p>Barna velger sin egen profil og ser egne oppgaver der. Voksen kan styre alt fra et eget område med PIN.</p>
         <div class="hero-stats">
           <div class="stat"><strong>${state.children.length}</strong><span>barn</span></div>
           <div class="stat"><strong>${state.tasks.filter((task) => task.active).length}</strong><span>aktive oppgaver</span></div>
@@ -221,7 +221,6 @@ function childCard(child) {
       <div class="avatar" style="background:${child.color}22">${child.avatar}</div>
       <div>
         <h2>${child.name}</h2>
-        <p class="muted">${child.pointsBalance} stjerner</p>
       </div>
       <div class="progress" aria-label="${percent}% fullført"><span style="width:${percent}%"></span></div>
       <p class="small">${completed} av ${today.length} oppdrag i dag</p>
