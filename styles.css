@@ -335,6 +335,10 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.hero.single {
+  grid-template-columns: 1fr;
+}
+
 .hero-main {
   position: relative;
   overflow: hidden;

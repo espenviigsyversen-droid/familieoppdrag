@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "23";
+const APP_VERSION = "24";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -275,7 +275,7 @@ function renderChild(childId) {
         <button class="btn secondary" data-action="adult-login">🔐 Voksen</button>
       </div>
     </header>
-    <section class="hero">
+    <section class="hero ${view.childTab === "me" ? "single" : ""}">
       <div class="hero-main" style="background:linear-gradient(135deg, ${child.color}, #00c2a8)">
         <h1>${child.pointsBalance} stjerner</h1>
         <p>Nivå ${stats.levelNumber}: ${stats.level.name}</p>
@@ -285,9 +285,9 @@ function renderChild(childId) {
           <div class="stat"><strong>${child.streak}</strong><span>streak</span></div>
         </div>
       </div>
-      <div class="panel">
+      ${view.childTab === "me" ? "" : `<div class="panel">
         ${levelProgressCard(child, "compact")}
-      </div>
+      </div>`}
     </section>
     ${view.childTab === "tasks" ? childTaskView(child) : ""}
     ${view.childTab === "rewards" ? childRewardView(child) : ""}
