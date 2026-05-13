@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "24";
+const APP_VERSION = "26";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -220,7 +220,7 @@ function renderHome() {
         <p>Barna velger sin egen profil og ser egne oppgaver der. Voksen kan styre alt fra et eget område med PIN.</p>
         <div class="hero-stats">
           <div class="stat"><strong>${state.children.length}</strong><span>barn</span></div>
-          <div class="stat"><strong>${state.tasks.filter((task) => task.active).length}</strong><span>aktive oppgaver</span></div>
+          <div class="stat"><strong>${state.tasks.filter((task) => task.active && !task.hiddenFromChildren).length}</strong><span>aktive oppgaver</span></div>
           <div class="stat"><strong>${pendingApprovals().length}</strong><span>venter på voksen</span></div>
         </div>
       </div>
@@ -798,7 +798,7 @@ function adultTasks() {
                 <td>${item.icon} <strong>${item.title}</strong><br><span class="small">${item.points} stjerner</span></td>
                 <td>${frequencyLabel(item.frequency)}<br><span class="small">${item.category}</span></td>
                 <td>${item.assignedChildren.map((id) => getChild(id).name).join(", ")}</td>
-                <td>${item.active ? "Aktiv" : "Deaktivert"}${item.requiresApproval ? "<br><span class=\"small\">Krever voksen</span>" : ""}</td>
+                <td>${taskStatusText(item)}</td>
                 <td><button class="btn secondary" data-action="edit-task" data-id="${item.id}">Endre</button></td>
               </tr>
             `).join("")}
@@ -848,6 +848,7 @@ function taskForm(task) {
           ${checkPill("requiresApproval", "yes", "Krever voksen", task?.requiresApproval || false)}
           ${checkPill("repeatable", "yes", "Repeterbar", task?.repeatable || false)}
           ${checkPill("active", "yes", "Aktiv", task?.active ?? true)}
+          ${checkPill("hiddenFromChildren", "yes", "Skjult for barn", task?.hiddenFromChildren || false)}
         </div>
       </div>
       <div class="actions" style="grid-column:1/-1">
@@ -1340,6 +1341,7 @@ function saveTask(form) {
     requiresApproval: data.get("requiresApproval") === "yes",
     repeatable: data.get("repeatable") === "yes",
     active: data.get("active") === "yes",
+    hiddenFromChildren: data.get("hiddenFromChildren") === "yes",
     sortOrder: current?.sortOrder || state.tasks.length + 1,
     createdAt: current?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -1380,12 +1382,20 @@ function saveReward(form) {
 
 function childPeriodTasks(childId, frequency) {
   return state.tasks
-    .filter((task) => task.active && task.frequency === frequency && task.assignedChildren.includes(childId) && taskMatchesToday(task))
+    .filter((task) => task.active && !task.hiddenFromChildren && task.frequency === frequency && task.assignedChildren.includes(childId) && taskMatchesToday(task))
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((task) => {
       const completion = findCompletion(task, childId);
       return { task, completion, status: completion?.status || "not-started" };
     });
+}
+
+function taskStatusText(task) {
+  return [
+    task.active ? "Aktiv" : "Deaktivert",
+    task.hiddenFromChildren ? "<span class=\"small\">Skjult for barn</span>" : "",
+    task.requiresApproval ? "<span class=\"small\">Krever voksen</span>" : ""
+  ].filter(Boolean).join("<br>");
 }
 
 function findCompletion(task, childId) {
@@ -1395,7 +1405,9 @@ function findCompletion(task, childId) {
     .find((completion) => {
       if (completion.taskId !== task.id || completion.childId !== childId) return false;
       if (completion.status === "rejected" || completion.status === "reversed") return false;
-      if (task.repeatable) return ["pending", "approved", "completed"].includes(completion.status);
+      if (task.repeatable && task.frequency === "weekly") return completion.weekId === weekId();
+      if (task.repeatable && task.frequency === "once") return completion.date === dateKey();
+      if (task.repeatable) return completion.date === dateKey();
       if (task.frequency === "weekly") return completion.weekId === weekId();
       if (task.frequency === "once") return ["pending", "completed", "approved"].includes(completion.status);
       return completion.date === dateKey();
