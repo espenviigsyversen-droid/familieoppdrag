@@ -215,6 +215,30 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.filter-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(130px, 1fr));
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid rgba(228, 231, 245, 0.9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.filter-bar .field {
+  margin: 0;
+}
+
+.compact-title {
+  align-items: flex-start;
+  margin-top: 0;
+}
+
+.compact-title p {
+  margin: 6px 0 0;
+}
+
 .level-editor {
   display: grid;
   gap: 12px;
@@ -792,6 +816,7 @@ th {
   .profile-grid,
   .dashboard-grid,
   .form-grid,
+  .filter-bar,
   .level-row {
     grid-template-columns: 1fr;
   }

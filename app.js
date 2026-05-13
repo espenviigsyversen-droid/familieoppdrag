@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "26";
+const APP_VERSION = "27";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -132,6 +132,8 @@ let view = {
   adultUnlocked: false,
   editingTaskId: null,
   editingRewardId: null,
+  creatingTask: false,
+  taskFilters: { search: "", category: "all", child: "all", status: "all" },
   avatarPickerChildId: null,
   gate: null
 };
@@ -782,18 +784,36 @@ function approvedRewardCard(redemption) {
 
 function adultTasks() {
   const task = view.editingTaskId ? getTask(view.editingTaskId) : null;
+  if (view.creatingTask || task) {
+    return `
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h2>${task ? "Endre oppgave" : "Ny oppgave"}</h2>
+            <p class="muted">${task ? "Oppdater oppgaven og gå tilbake til listen." : "Lag oppgaven ferdig før barna ser den."}</p>
+          </div>
+          <button class="btn secondary" type="button" data-action="cancel-edit-task">Tilbake</button>
+        </div>
+        ${taskForm(task)}
+      </section>
+    `;
+  }
+  const tasks = filteredAdultTasks();
   return `
-    <section class="panel">
-      <h2>${task ? "Endre oppgave" : "Ny oppgave"}</h2>
-      ${taskForm(task)}
-    </section>
     <section>
-      <div class="section-title"><h2>Oppgaver</h2><span class="small">${state.tasks.length} totalt</span></div>
+      <div class="section-title">
+        <div>
+          <h2>Oppgaver</h2>
+          <p class="muted">${tasks.length} vises av ${state.tasks.length} totalt</p>
+        </div>
+        <button class="btn" data-action="new-task">Ny oppgave</button>
+      </div>
+      ${taskFilterBar()}
       <div class="table-wrap">
         <table>
           <thead><tr><th>Oppgave</th><th>Type</th><th>Barn</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            ${state.tasks.slice().sort((a, b) => a.sortOrder - b.sortOrder).map((item) => `
+            ${tasks.length ? tasks.map((item) => `
               <tr>
                 <td>${item.icon} <strong>${item.title}</strong><br><span class="small">${item.points} stjerner</span></td>
                 <td>${frequencyLabel(item.frequency)}<br><span class="small">${item.category}</span></td>
@@ -801,12 +821,62 @@ function adultTasks() {
                 <td>${taskStatusText(item)}</td>
                 <td><button class="btn secondary" data-action="edit-task" data-id="${item.id}">Endre</button></td>
               </tr>
-            `).join("")}
+            `).join("") : `<tr><td colspan="5"><div class="empty">Ingen oppgaver passer filteret.</div></td></tr>`}
           </tbody>
         </table>
       </div>
     </section>
   `;
+}
+
+function taskFilterBar() {
+  const filters = view.taskFilters;
+  return `
+    <div class="filter-bar">
+      <div class="field">
+        <label>Søk</label>
+        <input data-filter="task-search" type="search" value="${escapeAttr(filters.search)}" placeholder="Søk etter oppgave">
+      </div>
+      <div class="field">
+        <label>Kategori</label>
+        <select data-filter="task-category">
+          ${[["all", "Alle"], ["Morgen", "Morgen"], ["Etter skole", "Etter skole"], ["Kveld", "Kveld"], ["Helg", "Helg"], ["Bonus", "Bonus"]].map(([value, label]) => `<option value="${value}" ${filters.category === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Barn</label>
+        <select data-filter="task-child">
+          <option value="all" ${filters.child === "all" ? "selected" : ""}>Alle</option>
+          ${state.children.map((child) => `<option value="${child.id}" ${filters.child === child.id ? "selected" : ""}>${child.name}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select data-filter="task-status">
+          ${[["all", "Alle"], ["visible", "Synlig for barn"], ["hidden", "Skjult for barn"], ["active", "Aktiv"], ["inactive", "Deaktivert"], ["approval", "Krever voksen"]].map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+  `;
+}
+
+function filteredAdultTasks() {
+  const filters = view.taskFilters;
+  const search = filters.search.trim().toLowerCase();
+  return state.tasks
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .filter((task) => {
+      if (search && !`${task.title} ${task.description} ${task.category}`.toLowerCase().includes(search)) return false;
+      if (filters.category !== "all" && task.category !== filters.category) return false;
+      if (filters.child !== "all" && !task.assignedChildren.includes(filters.child)) return false;
+      if (filters.status === "visible" && task.hiddenFromChildren) return false;
+      if (filters.status === "hidden" && !task.hiddenFromChildren) return false;
+      if (filters.status === "active" && !task.active) return false;
+      if (filters.status === "inactive" && task.active) return false;
+      if (filters.status === "approval" && !task.requiresApproval) return false;
+      return true;
+    });
 }
 
 function taskForm(task) {
@@ -1350,6 +1420,7 @@ function saveTask(form) {
   if (current) Object.assign(current, task);
   else state.tasks.push(task);
   view.editingTaskId = null;
+  view.creatingTask = false;
   saveState();
   showToast("Oppgaven er lagret.");
   render();
@@ -1801,6 +1872,7 @@ app.addEventListener("click", (event) => {
   if (action === "adult-tab") {
     view.adultTab = tab;
     view.editingTaskId = null;
+    view.creatingTask = false;
     view.editingRewardId = null;
     render();
   }
@@ -1814,12 +1886,19 @@ app.addEventListener("click", (event) => {
   if (action === "fulfill-reward") fulfillReward(id);
   if (action === "refund-reward" && confirm("Vil du refundere denne belønningen?")) refundReward(id);
   if (action === "hide-child-reward" && confirm("Er du sikker på at du vil fjerne denne belønningen fra listen?")) hideChildReward(id);
+  if (action === "new-task") {
+    view.creatingTask = true;
+    view.editingTaskId = null;
+    render();
+  }
   if (action === "edit-task") {
     view.editingTaskId = id;
+    view.creatingTask = false;
     render();
   }
   if (action === "cancel-edit-task") {
     view.editingTaskId = null;
+    view.creatingTask = false;
     render();
   }
   if (action === "edit-reward") {
@@ -1874,6 +1953,16 @@ app.addEventListener("click", (event) => {
     link.click();
     URL.revokeObjectURL(url);
   }
+});
+
+app.addEventListener("change", (event) => {
+  const filter = event.target.dataset.filter;
+  if (!filter) return;
+  if (filter === "task-search") view.taskFilters.search = event.target.value;
+  if (filter === "task-category") view.taskFilters.category = event.target.value;
+  if (filter === "task-child") view.taskFilters.child = event.target.value;
+  if (filter === "task-status") view.taskFilters.status = event.target.value;
+  render();
 });
 
 function changeChildAvatar(childId, avatar) {
