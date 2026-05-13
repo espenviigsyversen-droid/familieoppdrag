@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "20";
+const APP_VERSION = "22";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -38,6 +38,7 @@ const DEFAULT_LEVELS = [
 
 const TASK_ICONS = ["⭐", "🪥", "🦷", "🪮", "💇", "🧼", "🫧", "🧴", "🧻", "💊", "🥄", "🍋", "🧃", "🎒", "📚", "🥪", "🍱", "👕", "👚", "👟", "🧥", "🧦", "🧺", "🧸", "🧹", "🥐", "🍽️", "🥣", "🍲", "🍴", "🗑️", "🌱", "🔌", "🔋", "📱", "⌚", "⏰", "🤝", "🫶", "👫", "💪", "✨", "💛", "🏅"];
 const REWARD_ICONS = ["🎁", "🎮", "🕹️", "📱", "🎬", "🍝", "💰", "🏅", "🍦", "🧩", "🎨", "⚽", "🚲", "📚", "⭐"];
+const AVATAR_ICONS = ["🌟", "🚀", "🌈", "⚽", "🎮", "🎨", "🎤", "🎧", "🎬", "📚", "🧩", "🛹", "🚲", "🏀", "🏆", "🥇", "💎", "🔥", "⚡", "✨", "💫", "🌙", "☀️", "🌸", "🌻", "🍀", "🍓", "🍉", "🍕", "🧁", "🍦", "🎁", "🎲", "🦄", "🐶", "🐱", "🐼", "🦊", "🐯", "🦁", "🐵", "🐧", "🐢", "🐬", "🦋", "🐝"];
 
 const childrenSeed = [
   { id: "sofia", name: "Sofia", avatar: "🌟", color: "#8B5CF6", pointsBalance: 0, lifetimePoints: 0, streak: 0, active: true },
@@ -122,6 +123,7 @@ let view = {
   adultUnlocked: false,
   editingTaskId: null,
   editingRewardId: null,
+  avatarPickerChildId: null,
   gate: null
 };
 
@@ -234,7 +236,7 @@ function renderChild(childId) {
   app.innerHTML = `
     <header class="topbar">
       <div class="brand">
-        <div class="avatar" style="background:${child.color}22">${child.avatar}</div>
+        <button class="avatar avatar-button" style="background:${child.color}22" data-action="open-avatar-picker" data-child="${child.id}" aria-label="Velg ikon">${child.avatar}</button>
         <div>
           <p class="eyebrow">Hei, ${child.name}</p>
           <h1>${view.childTab === "tasks" ? "Oppdrag" : view.childTab === "rewards" ? "Belønninger" : "Mine stjerner"}</h1>
@@ -268,6 +270,30 @@ function renderChild(childId) {
       <button class="${view.childTab === "rewards" ? "active" : ""}" data-action="child-tab" data-tab="rewards">🎁 Belønning</button>
       <button class="${view.childTab === "me" ? "active" : ""}" data-action="child-tab" data-tab="me">🏅 Meg</button>
     </nav>
+    ${view.avatarPickerChildId === child.id ? avatarPickerModal(child) : ""}
+  `;
+}
+
+function avatarPickerModal(child) {
+  return `
+    <div class="modal-backdrop">
+      <div class="modal avatar-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-title">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">${child.name}</p>
+            <h2 id="avatar-title">Velg ikon</h2>
+          </div>
+          <button class="btn secondary icon-btn" data-action="close-avatar-picker" aria-label="Lukk">✕</button>
+        </div>
+        <div class="avatar-picker">
+          ${AVATAR_ICONS.map((icon) => `
+            <button class="avatar-choice ${icon === child.avatar ? "selected" : ""}" data-action="choose-avatar" data-child="${child.id}" data-avatar="${escapeAttr(icon)}" aria-label="Velg ${escapeAttr(icon)}">
+              ${icon}
+            </button>
+          `).join("")}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -1147,7 +1173,7 @@ function refundReward(id) {
   const reward = getReward(redemption.rewardId);
 
   if (redemption.status === "approved") {
-    awardPoints(redemption.childId, redemption.cost, `Refundert: ${reward.title}`, id, "refund");
+    refundPoints(redemption.childId, redemption.cost, `Refundert: ${reward.title}`, id);
   } else {
     addHistory(redemption.childId, "Belønning refundert", `Avbrutt: ${reward.title}`, 0);
   }
@@ -1202,6 +1228,24 @@ function awardPoints(childId, amount, description, sourceId = null, type = "manu
   };
   state.transactions.push(transaction);
   addHistory(childId, "Poeng", description, amount, transaction.createdAt);
+}
+
+function refundPoints(childId, amount, description, sourceId = null) {
+  const child = getChild(childId);
+  child.pointsBalance += amount;
+  const transaction = {
+    id: crypto.randomUUID(),
+    childId,
+    type: "refund",
+    sourceId,
+    description,
+    pointsChange: amount,
+    balanceAfter: child.pointsBalance,
+    createdAt: new Date().toISOString(),
+    createdBy: view.adultUnlocked ? "adult" : childId
+  };
+  state.transactions.push(transaction);
+  addHistory(childId, "Belønning refundert", description, amount, transaction.createdAt);
 }
 
 function addHistory(childId, type, description, pointsChange, createdAt = new Date().toISOString()) {
@@ -1591,6 +1635,17 @@ app.addEventListener("click", (event) => {
     view.childTab = tab;
     render();
   }
+  if (action === "open-avatar-picker") {
+    view.avatarPickerChildId = child;
+    render();
+  }
+  if (action === "close-avatar-picker") {
+    view.avatarPickerChildId = null;
+    render();
+  }
+  if (action === "choose-avatar") {
+    changeChildAvatar(child, button.dataset.avatar);
+  }
   if (action === "adult-tab") {
     view.adultTab = tab;
     view.editingTaskId = null;
@@ -1668,6 +1723,16 @@ app.addEventListener("click", (event) => {
     URL.revokeObjectURL(url);
   }
 });
+
+function changeChildAvatar(childId, avatar) {
+  const child = getChild(childId);
+  if (!child || !AVATAR_ICONS.includes(avatar)) return;
+  child.avatar = avatar;
+  view.avatarPickerChildId = null;
+  saveState();
+  showToast("Ikonet er oppdatert.");
+  render();
+}
 
 app.addEventListener("submit", async (event) => {
   event.preventDefault();

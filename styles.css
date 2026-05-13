@@ -87,6 +87,16 @@ button:disabled {
   font-size: 29px;
 }
 
+.avatar-button {
+  border: 0;
+}
+
+.avatar-button:hover,
+.avatar-button:focus-visible {
+  outline: 3px solid rgba(108, 99, 255, 0.24);
+  transform: translateY(-1px);
+}
+
 .brand h1,
 .hero h1,
 .section-title h2 {
@@ -625,6 +635,44 @@ th {
 
 .modal h2 {
   margin: 0 0 8px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.avatar-modal {
+  width: min(560px, 100%);
+}
+
+.avatar-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(54px, 1fr));
+  gap: 10px;
+  max-height: min(62svh, 520px);
+  overflow: auto;
+  padding: 2px;
+}
+
+.avatar-choice {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  min-height: 54px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #f8f9ff;
+  font-size: 1.8rem;
+}
+
+.avatar-choice.selected {
+  border-color: var(--primary);
+  background: rgba(108, 99, 255, 0.12);
+  box-shadow: inset 0 0 0 2px rgba(108, 99, 255, 0.22);
 }
 
 .toast {
