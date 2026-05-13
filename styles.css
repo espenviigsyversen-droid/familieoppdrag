@@ -239,6 +239,56 @@ button:disabled {
   margin-top: 0;
 }
 
+.level-card {
+  display: grid;
+  gap: 14px;
+}
+
+.level-card.compact {
+  height: 100%;
+}
+
+.level-card-head,
+.level-next-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.level-card-head h2 {
+  margin: 0;
+}
+
+.level-badge {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  border-radius: 18px;
+  background: #f4f6ff;
+  font-size: 1.7rem;
+}
+
+.level-next-row {
+  align-items: flex-start;
+  color: var(--muted);
+}
+
+.level-next-row strong {
+  color: var(--ink);
+  text-align: right;
+}
+
+.level-progress {
+  height: 16px;
+}
+
+.level-card p {
+  margin: 0;
+}
+
 .profile-card {
   display: flex;
   flex-direction: column;

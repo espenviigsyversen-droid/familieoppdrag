@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "19";
+const APP_VERSION = "20";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -257,8 +257,7 @@ function renderChild(childId) {
         </div>
       </div>
       <div class="panel">
-        <h2>Neste belønning</h2>
-        ${nextRewardMessage(child)}
+        ${levelProgressCard(child, "compact")}
       </div>
     </section>
     ${view.childTab === "tasks" ? childTaskView(child) : ""}
@@ -446,6 +445,7 @@ function childMeView(child) {
   const history = state.history.filter((item) => item.childId === child.id).slice(0, 12);
   const rewards = completedRewardRedemptions(child.id).slice(0, 12);
   return `
+    ${levelProgressCard(child, "full")}
     <section class="dashboard-grid">
       <article class="card">
         <h3>Stjerner</h3>
@@ -1343,27 +1343,77 @@ function currentLevel(points) {
 }
 
 function currentLevelIndex(points) {
-  return getLevels().findIndex((level) => level.name === currentLevel(points).name) + 1;
+  const levels = getLevels();
+  return levels.findIndex((level, index) => points >= level.min && (!levels[index + 1] || points < levels[index + 1].min)) + 1;
+}
+
+function nextLevelProgress(points) {
+  const levels = getLevels();
+  const currentIndex = Math.max(0, currentLevelIndex(points) - 1);
+  const current = levels[Math.max(0, currentIndex)] || levels[0];
+  const next = levels[currentIndex + 1] || null;
+  if (!next) {
+    return {
+      current,
+      next: null,
+      currentNumber: currentIndex + 1,
+      nextNumber: null,
+      percent: 100,
+      earnedInLevel: Math.max(0, points - current.min),
+      neededInLevel: 0,
+      missing: 0,
+      totalPoints: points
+    };
+  }
+  const neededInLevel = Math.max(1, next.min - current.min);
+  const earnedInLevel = Math.min(neededInLevel, Math.max(0, points - current.min));
+  return {
+    current,
+    next,
+    currentNumber: currentIndex + 1,
+    nextNumber: currentIndex + 2,
+    percent: Math.round((earnedInLevel / neededInLevel) * 100),
+    earnedInLevel,
+    neededInLevel,
+    missing: Math.max(0, next.min - points),
+    totalPoints: points
+  };
+}
+
+function levelProgressCard(child, variant = "compact") {
+  const progress = nextLevelProgress(child.lifetimePoints);
+  const isMaxLevel = !progress.next;
+  const title = variant === "compact" ? "Neste nivå" : "Nivåfremdrift";
+  const cardClass = variant === "compact" ? "level-card compact" : "card level-card";
+  return `
+    <article class="${cardClass}">
+      <div class="level-card-head">
+        <div>
+          <p class="eyebrow">Nivå ${progress.currentNumber}</p>
+          <h2>${progress.current.name}</h2>
+        </div>
+        <span class="level-badge">${child.avatar}</span>
+      </div>
+      <div class="level-next-row">
+        <span>${title}</span>
+        <strong>${isMaxLevel ? "Toppnivå!" : `Nivå ${progress.nextNumber}: ${progress.next.name}`}</strong>
+      </div>
+      <div class="progress level-progress" aria-label="${progress.percent}% mot neste nivå">
+        <span style="width:${progress.percent}%"></span>
+      </div>
+      <p class="muted">
+        ${isMaxLevel
+          ? `${child.lifetimePoints} livstidsstjerner. Du er på høyeste nivå nå.`
+          : `${child.lifetimePoints} av ${progress.next.min} livstidsstjerner. Du mangler ${progress.missing} stjerner.`}
+      </p>
+    </article>
+  `;
 }
 
 function getLevels() {
   return (state.levels?.length ? state.levels : DEFAULT_LEVELS)
     .map((level) => ({ min: Number(level.min) || 0, name: level.name || "Nivå" }))
     .sort((a, b) => a.min - b.min);
-}
-
-function nextRewardMessage(child) {
-  const rewards = state.rewards
-    .filter((reward) => reward.active && reward.assignedChildren.includes(child.id))
-    .sort((a, b) => Math.max(0, a.cost - child.pointsBalance) - Math.max(0, b.cost - child.pointsBalance));
-  const next = rewards.find((reward) => reward.cost > child.pointsBalance) || rewards[0];
-  if (!next) return `<p class="muted">Ingen belønninger er lagt inn ennå.</p>`;
-  const missing = next.cost - child.pointsBalance;
-  return `
-    <div class="reward-icon">${next.icon}</div>
-    <h3>${next.title}</h3>
-    <p class="muted">${missing > 0 ? `Du mangler ${missing} stjerner.` : "Du har råd til denne nå."}</p>
-  `;
 }
 
 function getChild(id) {
