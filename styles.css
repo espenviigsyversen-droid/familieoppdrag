@@ -205,6 +205,12 @@ button:disabled {
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
 
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
 .form-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -445,6 +451,45 @@ button:disabled {
   border-radius: 16px;
   background: #f1f5ff;
   font-size: 28px;
+}
+
+.badge-card {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 26px rgba(38, 42, 93, 0.08);
+}
+
+.badge-card.locked {
+  opacity: 0.62;
+}
+
+.badge-card h3,
+.badge-card p {
+  margin: 0;
+}
+
+.badge-card p + p {
+  margin-top: 4px;
+}
+
+.badge-icon {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  background: #fff7dd;
+  font-size: 1.7rem;
+}
+
+.badge-card.locked .badge-icon {
+  background: #eef2ff;
 }
 
 .task-card p,

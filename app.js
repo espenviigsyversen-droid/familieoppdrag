@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "22";
+const APP_VERSION = "23";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -39,6 +39,15 @@ const DEFAULT_LEVELS = [
 const TASK_ICONS = ["⭐", "🪥", "🦷", "🪮", "💇", "🧼", "🫧", "🧴", "🧻", "💊", "🥄", "🍋", "🧃", "🎒", "📚", "🥪", "🍱", "👕", "👚", "👟", "🧥", "🧦", "🧺", "🧸", "🧹", "🥐", "🍽️", "🥣", "🍲", "🍴", "🗑️", "🌱", "🔌", "🔋", "📱", "⌚", "⏰", "🤝", "🫶", "👫", "💪", "✨", "💛", "🏅"];
 const REWARD_ICONS = ["🎁", "🎮", "🕹️", "📱", "🎬", "🍝", "💰", "🏅", "🍦", "🧩", "🎨", "⚽", "🚲", "📚", "⭐"];
 const AVATAR_ICONS = ["🌟", "🚀", "🌈", "⚽", "🎮", "🎨", "🎤", "🎧", "🎬", "📚", "🧩", "🛹", "🚲", "🏀", "🏆", "🥇", "💎", "🔥", "⚡", "✨", "💫", "🌙", "☀️", "🌸", "🌻", "🍀", "🍓", "🍉", "🍕", "🧁", "🍦", "🎁", "🎲", "🦄", "🐶", "🐱", "🐼", "🦊", "🐯", "🦁", "🐵", "🐧", "🐢", "🐬", "🦋", "🐝"];
+const BADGE_DEFINITIONS = [
+  { id: "first-task", icon: "⭐", name: "Første oppdrag", description: "Fullfør ditt første oppdrag.", isEarned: (childId) => completedTaskCount(childId) >= 1 },
+  { id: "task-10", icon: "🏅", name: "Ti oppdrag", description: "Fullfør 10 oppdrag.", isEarned: (childId) => completedTaskCount(childId) >= 10 },
+  { id: "task-50", icon: "🏆", name: "Oppdragshelt", description: "Fullfør 50 oppdrag.", isEarned: (childId) => completedTaskCount(childId) >= 50 },
+  { id: "morning-master", icon: "🌅", name: "Morgenmester", description: "Fullfør alle morgenoppdragene i dag.", isEarned: (childId) => categoryCompleteToday(childId, "Morgen") },
+  { id: "evening-hero", icon: "🌙", name: "Kveldshelt", description: "Fullfør alle kveldsoppdragene i dag.", isEarned: (childId) => categoryCompleteToday(childId, "Kveld") },
+  { id: "bonus-star", icon: "✨", name: "Bonusstjerne", description: "Fullfør et bonusoppdrag.", isEarned: (childId) => completedBonusCount(childId) >= 1 },
+  { id: "reward-picker", icon: "🎁", name: "Belønningsvelger", description: "Få en belønning godkjent.", isEarned: (childId) => state.redemptions.some((item) => item.childId === childId && ["approved", "fulfilled"].includes(item.status)) }
+];
 
 const childrenSeed = [
   { id: "sofia", name: "Sofia", avatar: "🌟", color: "#8B5CF6", pointsBalance: 0, lifetimePoints: 0, streak: 0, active: true },
@@ -136,12 +145,12 @@ function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
     try {
-      return JSON.parse(raw);
+      return normalizeLocalState(JSON.parse(raw));
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }
   }
-  return {
+  return normalizeLocalState({
     familyId: "local-family",
     parentPinHash: PIN_HASH,
     children: childrenSeed,
@@ -154,6 +163,24 @@ function loadState() {
     levels: DEFAULT_LEVELS,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
+  });
+}
+
+function normalizeLocalState(savedState = {}) {
+  return {
+    familyId: savedState.familyId || "local-family",
+    parentPinHash: savedState.parentPinHash || PIN_HASH,
+    children: savedState.children || childrenSeed,
+    tasks: savedState.tasks || taskSeeds,
+    completions: savedState.completions || [],
+    rewards: savedState.rewards || rewardSeeds,
+    redemptions: savedState.redemptions || [],
+    transactions: savedState.transactions || [],
+    history: savedState.history || [],
+    badges: savedState.badges || [],
+    levels: savedState.levels || DEFAULT_LEVELS,
+    createdAt: savedState.createdAt || new Date().toISOString(),
+    updatedAt: savedState.updatedAt || new Date().toISOString()
   };
 }
 
@@ -470,6 +497,7 @@ function rewardCard(reward, child) {
 function childMeView(child) {
   const history = state.history.filter((item) => item.childId === child.id).slice(0, 12);
   const rewards = completedRewardRedemptions(child.id).slice(0, 12);
+  const badges = earnedBadges(child.id);
   return `
     ${levelProgressCard(child, "full")}
     <section class="dashboard-grid">
@@ -490,6 +518,10 @@ function childMeView(child) {
       </article>
     </section>
     <section>
+      <div class="section-title"><h2>Merker</h2><span class="small">${badges.length} stk.</span></div>
+      ${badgeGrid(child.id)}
+    </section>
+    <section>
       <div class="section-title"><h2>Tidligere belønninger</h2></div>
       ${childRewardHistoryList(rewards)}
     </section>
@@ -497,6 +529,27 @@ function childMeView(child) {
       <div class="section-title"><h2>Historikk</h2></div>
       ${historyList(history, true)}
     </section>
+  `;
+}
+
+function badgeGrid(childId) {
+  const earned = earnedBadges(childId);
+  return `
+    <div class="badge-grid">
+      ${BADGE_DEFINITIONS.map((badge) => {
+        const childBadge = earned.find((item) => item.badgeId === badge.id);
+        return `
+          <article class="badge-card ${childBadge ? "earned" : "locked"}">
+            <div class="badge-icon">${childBadge ? badge.icon : "🔒"}</div>
+            <div>
+              <h3>${badge.name}</h3>
+              <p class="muted">${badge.description}</p>
+              <p class="small">${childBadge ? `Fikk ${formatDate(childBadge.awardedAt)}` : "Ikke låst opp ennå"}</p>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
   `;
 }
 
@@ -1040,8 +1093,8 @@ function completeTask(childId, taskId) {
     addHistory(childId, "Oppgave sendt til godkjenning", `${task.title} venter på voksen`, 0);
     showToast("Sendt til voksen for godkjenning.");
   } else {
-    awardPoints(childId, task.points, `Fullført: ${task.title}`, completion.id, "task");
-    celebrate(task.points);
+    const result = awardPoints(childId, task.points, `Fullført: ${task.title}`, completion.id, "task");
+    celebrateTaskResult(task.points, result);
   }
   saveState();
   render();
@@ -1138,6 +1191,7 @@ function approveReward(id) {
   redemption.status = "approved";
   redemption.approvedAt = new Date().toISOString();
   awardPoints(redemption.childId, -redemption.cost, `Belønning: ${reward.title}`, id, "reward");
+  awardBadges(redemption.childId);
   saveState();
   showToast("Belønning godkjent.");
   render();
@@ -1213,8 +1267,10 @@ async function refreshApp() {
 
 function awardPoints(childId, amount, description, sourceId = null, type = "manual") {
   const child = getChild(childId);
+  const previousLevelNumber = currentLevelIndex(child.lifetimePoints);
   child.pointsBalance += amount;
   if (amount > 0) child.lifetimePoints += amount;
+  const newLevelNumber = currentLevelIndex(child.lifetimePoints);
   const transaction = {
     id: crypto.randomUUID(),
     childId,
@@ -1228,6 +1284,14 @@ function awardPoints(childId, amount, description, sourceId = null, type = "manu
   };
   state.transactions.push(transaction);
   addHistory(childId, "Poeng", description, amount, transaction.createdAt);
+  const newBadges = amount > 0 ? awardBadges(childId, transaction.createdAt) : [];
+  return {
+    transaction,
+    levelUp: amount > 0 && newLevelNumber > previousLevelNumber,
+    level: currentLevel(child.lifetimePoints),
+    levelNumber: newLevelNumber,
+    badges: newBadges
+  };
 }
 
 function refundPoints(childId, amount, description, sourceId = null) {
@@ -1460,6 +1524,48 @@ function getLevels() {
     .sort((a, b) => a.min - b.min);
 }
 
+function earnedBadges(childId) {
+  return (state.badges || [])
+    .filter((item) => item.childId === childId)
+    .sort((a, b) => new Date(a.awardedAt) - new Date(b.awardedAt));
+}
+
+function awardBadges(childId, awardedAt = new Date().toISOString()) {
+  if (!state.badges) state.badges = [];
+  const childBadges = new Set(state.badges.filter((item) => item.childId === childId).map((item) => item.badgeId));
+  const newBadges = BADGE_DEFINITIONS
+    .filter((badge) => !childBadges.has(badge.id) && badge.isEarned(childId))
+    .map((badge) => ({
+      id: crypto.randomUUID(),
+      childId,
+      badgeId: badge.id,
+      awardedAt
+    }));
+  state.badges.push(...newBadges);
+  newBadges.forEach((badge) => {
+    const definition = BADGE_DEFINITIONS.find((item) => item.id === badge.badgeId);
+    addHistory(childId, "Merke", `Fikk merke: ${definition.icon} ${definition.name}`, 0, badge.awardedAt);
+  });
+  return newBadges;
+}
+
+function completedTaskCount(childId) {
+  return state.completions.filter((item) => item.childId === childId && ["completed", "approved"].includes(item.status)).length;
+}
+
+function completedBonusCount(childId) {
+  return state.completions.filter((item) => {
+    if (item.childId !== childId || !["completed", "approved"].includes(item.status)) return false;
+    const task = getTask(item.taskId);
+    return task?.category === "Bonus" || task?.frequency === "once";
+  }).length;
+}
+
+function categoryCompleteToday(childId, category) {
+  const tasks = childPeriodTasks(childId, "daily").filter((item) => item.task.category === category);
+  return tasks.length > 0 && tasks.every((item) => ["completed", "approved"].includes(item.status));
+}
+
 function getChild(id) {
   return state.children.find((child) => child.id === id);
 }
@@ -1595,6 +1701,40 @@ function celebrate(points) {
   layer.innerHTML = Array.from({ length: 18 }, (_, index) => `<span style="left:${Math.random() * 100}%;animation-delay:${index * 20}ms">⭐</span>`).join("");
   document.body.append(layer);
   window.setTimeout(() => layer.remove(), 1200);
+}
+
+function celebrateTaskResult(points, result = {}) {
+  if (result.levelUp) {
+    celebrateLevelUp(result.levelNumber, result.level.name);
+    return;
+  }
+  if (result.badges?.length) {
+    const badge = BADGE_DEFINITIONS.find((item) => item.id === result.badges[0].badgeId);
+    celebrateBadge(badge);
+    return;
+  }
+  celebrate(points);
+}
+
+function celebrateLevelUp(levelNumber, levelName) {
+  showToast(`Nytt nivå! Nivå ${levelNumber}: ${levelName}`);
+  if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+  const layer = document.createElement("div");
+  layer.className = "confetti level-confetti";
+  layer.innerHTML = Array.from({ length: 28 }, (_, index) => `<span style="left:${Math.random() * 100}%;animation-delay:${index * 18}ms">🏆</span>`).join("");
+  document.body.append(layer);
+  window.setTimeout(() => layer.remove(), 1500);
+}
+
+function celebrateBadge(badge) {
+  if (!badge) return celebrate(0);
+  showToast(`Nytt merke: ${badge.icon} ${badge.name}`);
+  if (navigator.vibrate) navigator.vibrate(70);
+  const layer = document.createElement("div");
+  layer.className = "confetti badge-confetti";
+  layer.innerHTML = Array.from({ length: 22 }, (_, index) => `<span style="left:${Math.random() * 100}%;animation-delay:${index * 20}ms">${badge.icon}</span>`).join("");
+  document.body.append(layer);
+  window.setTimeout(() => layer.remove(), 1300);
 }
 
 function escapeAttr(value) {
@@ -1889,6 +2029,7 @@ function normalizeRemoteState(remoteState) {
     redemptions: remoteState.redemptions || [],
     transactions: remoteState.transactions || [],
     history: remoteState.history || [],
+    badges: remoteState.badges || [],
     levels: remoteState.levels || DEFAULT_LEVELS
   };
 }
