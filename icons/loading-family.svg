@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">Familieoppdrag loading</title>
+  <desc id="desc">Illustrasjon av voksne og barn med stjerner.</desc>
+  <defs>
+    <linearGradient id="bg" x1="90" y1="60" x2="560" y2="600" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6C63FF"/>
+      <stop offset="1" stop-color="#00C2A8"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="250" y1="80" x2="410" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE08A"/>
+      <stop offset="1" stop-color="#FFD166"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#262A5D" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <rect x="48" y="48" width="544" height="544" rx="132" fill="url(#bg)"/>
+  <circle cx="162" cy="168" r="42" fill="#FFFFFF" opacity=".22"/>
+  <circle cx="492" cy="176" r="54" fill="#FFFFFF" opacity=".16"/>
+  <circle cx="500" cy="472" r="38" fill="#FFFFFF" opacity=".18"/>
+  <path d="M320 92l34 76 82 8-62 55 18 81-72-42-72 42 18-81-62-55 82-8 34-76z" fill="url(#gold)" filter="url(#softShadow)"/>
+  <g filter="url(#softShadow)">
+    <path d="M170 445c0-78 48-128 112-128s112 50 112 128v38H170v-38z" fill="#FFFFFF"/>
+    <circle cx="282" cy="250" r="62" fill="#FFFFFF"/>
+    <path d="M348 456c0-66 42-108 98-108s98 42 98 108v27H348v-27z" fill="#F7F7FF"/>
+    <circle cx="446" cy="296" r="52" fill="#F7F7FF"/>
+    <path d="M96 462c0-61 39-100 90-100s90 39 90 100v21H96v-21z" fill="#F7F7FF"/>
+    <circle cx="186" cy="316" r="48" fill="#F7F7FF"/>
+  </g>
+  <path d="M238 250c10 20 27 31 49 31s39-11 49-31" fill="none" stroke="#6C63FF" stroke-width="14" stroke-linecap="round"/>
+  <path d="M414 298c8 15 21 23 38 23s30-8 38-23" fill="none" stroke="#00A8B5" stroke-width="12" stroke-linecap="round"/>
+  <path d="M154 318c7 13 19 20 34 20s27-7 34-20" fill="none" stroke="#F472B6" stroke-width="11" stroke-linecap="round"/>
+  <circle cx="258" cy="232" r="8" fill="#1F2937"/>
+  <circle cx="310" cy="232" r="8" fill="#1F2937"/>
+  <circle cx="428" cy="282" r="7" fill="#1F2937"/>
+  <circle cx="470" cy="282" r="7" fill="#1F2937"/>
+  <circle cx="170" cy="304" r="6" fill="#1F2937"/>
+  <circle cx="206" cy="304" r="6" fill="#1F2937"/>
+  <path d="M126 136l11 25 27 3-21 18 6 26-23-14-23 14 6-26-21-18 27-3 11-25z" fill="#FFD166"/>
+  <path d="M514 352l10 22 24 2-18 16 5 24-21-12-21 12 5-24-18-16 24-2 10-22z" fill="#FFD166"/>
+</svg>
