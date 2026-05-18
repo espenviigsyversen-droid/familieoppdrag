@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "35";
+const APP_VERSION = "36";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -195,6 +195,8 @@ let view = {
   editingChildId: null,
   settingsPage: "menu",
   creatingTask: false,
+  creatingReward: false,
+  creatingChild: false,
   taskFilters: { search: "", category: "all", child: "all", status: "all" },
   avatarPickerChildId: null,
   gate: null
@@ -1231,13 +1233,29 @@ function taskForm(task) {
 
 function adultRewards() {
   const reward = view.editingRewardId ? getReward(view.editingRewardId) : null;
+  if (view.creatingReward || reward) {
+    return `
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h2>${reward ? "Endre belønning" : "Ny belønning"}</h2>
+            <p class="muted">${reward ? "Oppdater belønningen og gå tilbake til listen." : "Lag en belønning barna kan bruke stjerner på."}</p>
+          </div>
+          <button class="btn secondary" type="button" data-action="cancel-edit-reward">Tilbake</button>
+        </div>
+        ${rewardForm(reward)}
+      </section>
+    `;
+  }
   return `
-    <section class="panel">
-      <h2>${reward ? "Endre belønning" : "Ny belønning"}</h2>
-      ${rewardForm(reward)}
-    </section>
     <section>
-      <div class="section-title"><h2>Belønninger</h2><span class="small">${state.rewards.length} totalt</span></div>
+      <div class="section-title">
+        <div>
+          <h2>Belønninger</h2>
+          <p class="muted">${state.rewards.length} totalt</p>
+        </div>
+        <button class="btn" data-action="new-reward">Ny belønning</button>
+      </div>
       <div class="reward-grid">
         ${state.rewards.slice().sort((a, b) => a.cost - b.cost || a.title.localeCompare(b.title, "no")).map((item) => `
           <article class="card">
@@ -1288,18 +1306,30 @@ function rewardForm(reward) {
 
 function adultChildren() {
   const editingChild = view.editingChildId ? getChild(view.editingChildId) : null;
-  return `
-    <section class="panel">
-      <div class="section-title compact-title">
-        <div>
-          <h2>${editingChild ? "Endre barn" : "Legg til barn"}</h2>
-          <p class="muted">${editingChild ? "Oppdater navn, ikon, farge og om profilen skal være synlig." : "Nye barn legges automatisk til på aktive oppgaver og belønninger."}</p>
+  if (view.creatingChild || editingChild) {
+    return `
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h2>${editingChild ? "Endre barn" : "Legg til barn"}</h2>
+            <p class="muted">${editingChild ? "Oppdater navn, ikon, farge og om profilen skal være synlig." : "Nye barn legges automatisk til på aktive oppgaver og belønninger."}</p>
+          </div>
+          <button class="btn secondary" type="button" data-action="cancel-edit-child">Tilbake</button>
         </div>
-        ${editingChild ? `<button class="btn secondary" type="button" data-action="cancel-edit-child">Avbryt</button>` : ""}
+        ${childForm(editingChild)}
+      </section>
+    `;
+  }
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Barn</h2>
+          <p class="muted">${state.children.length} profiler</p>
+        </div>
+        <button class="btn" data-action="new-child">Legg til barn</button>
       </div>
-      ${childForm(editingChild)}
-    </section>
-    <section class="dashboard-grid">
+      <div class="dashboard-grid">
       ${state.children.map((child) => `
         <article class="card">
           <div class="brand">
@@ -1335,6 +1365,7 @@ function adultChildren() {
           </form>
         </article>
       `).join("")}
+      </div>
     </section>
   `;
 }
@@ -1976,6 +2007,7 @@ function saveReward(form) {
   if (current) Object.assign(current, reward);
   else state.rewards.push(reward);
   view.editingRewardId = null;
+  view.creatingReward = false;
   saveState();
   showToast("Belønningen er lagret.");
   render();
@@ -2098,6 +2130,8 @@ async function importStateFile(file) {
     view.editingRewardId = null;
     view.editingChildId = null;
     view.creatingTask = false;
+    view.creatingReward = false;
+    view.creatingChild = false;
     view.gate = null;
     localStorage.setItem(DEVICE_PROFILE_KEY, "home");
     saveState();
@@ -2142,6 +2176,7 @@ function saveChild(form) {
   }
 
   view.editingChildId = null;
+  view.creatingChild = false;
   saveState();
   render();
 }
@@ -2798,6 +2833,8 @@ app.addEventListener("click", (event) => {
     view.creatingTask = false;
     view.editingRewardId = null;
     view.editingChildId = null;
+    view.creatingReward = false;
+    view.creatingChild = false;
     view.settingsPage = "menu";
     render();
   }
@@ -2826,20 +2863,34 @@ app.addEventListener("click", (event) => {
     view.creatingTask = false;
     render();
   }
+  if (action === "new-reward") {
+    view.creatingReward = true;
+    view.editingRewardId = null;
+    render();
+  }
   if (action === "edit-reward") {
     view.editingRewardId = id;
+    view.creatingReward = false;
     render();
   }
   if (action === "cancel-edit-reward") {
     view.editingRewardId = null;
+    view.creatingReward = false;
+    render();
+  }
+  if (action === "new-child") {
+    view.creatingChild = true;
+    view.editingChildId = null;
     render();
   }
   if (action === "edit-child") {
     view.editingChildId = child;
+    view.creatingChild = false;
     render();
   }
   if (action === "cancel-edit-child") {
     view.editingChildId = null;
+    view.creatingChild = false;
     render();
   }
   if (action === "apply-starter" && confirm("Vil du legge inn denne startpakken? Eksisterende oppgaver og belønninger blir ikke slettet.")) {
