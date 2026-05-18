@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "27";
+const APP_VERSION = "28";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -39,6 +39,7 @@ const DEFAULT_LEVELS = [
 const TASK_ICONS = ["⭐", "🪥", "🦷", "🪮", "💇", "🧼", "🫧", "🧴", "🧻", "💊", "🥄", "🍋", "🧃", "🎒", "📚", "🥪", "🍱", "👕", "👚", "👟", "🧥", "🧦", "🧺", "🧸", "🧹", "🥐", "🍽️", "🥣", "🍲", "🍴", "🗑️", "🌱", "🔌", "🔋", "📱", "⌚", "⏰", "🤝", "🫶", "👫", "💪", "✨", "💛", "🏅"];
 const REWARD_ICONS = ["🎁", "🎮", "🕹️", "📱", "🎬", "🍝", "💰", "🏅", "🍦", "🧩", "🎨", "⚽", "🚲", "📚", "⭐"];
 const AVATAR_ICONS = ["🌟", "🚀", "🌈", "⚽", "🎮", "🎨", "🎤", "🎧", "🎬", "📚", "🧩", "🛹", "🚲", "🏀", "🏆", "🥇", "💎", "🔥", "⚡", "✨", "💫", "🌙", "☀️", "🌸", "🌻", "🍀", "🍓", "🍉", "🍕", "🧁", "🍦", "🎁", "🎲", "🦄", "🐶", "🐱", "🐼", "🦊", "🐯", "🦁", "🐵", "🐧", "🐢", "🐬", "🦋", "🐝"];
+const CHILD_COLORS = ["#8B5CF6", "#00A8B5", "#F472B6", "#06D6A0", "#FFD166", "#EF476F", "#118AB2", "#F97316"];
 const BADGE_DEFINITIONS = [
   { id: "first-task", icon: "⭐", name: "Første oppdrag", description: "Fullfør ditt første oppdrag.", isEarned: (childId) => completedTaskCount(childId) >= 1 },
   { id: "task-10", icon: "🏅", name: "Ti oppdrag", description: "Fullfør 10 oppdrag.", isEarned: (childId) => completedTaskCount(childId) >= 10 },
@@ -121,6 +122,47 @@ const rewardSeeds = [
   updatedAt: new Date().toISOString()
 }));
 
+const STARTER_PACKAGES = [
+  {
+    id: "routine",
+    title: "Morgen og kveld",
+    description: "Vanlige hverdagsoppgaver som gir en myk start uten for mye oppsett.",
+    tasks: [
+      ["Pusse tenner morgen", "Gjør tennene klare for dagen.", "🪥", 5, "Morgen", "daily", ["weekdays"], false],
+      ["Kle på seg", "Finn klær og kle på deg.", "👕", 5, "Morgen", "daily", ["weekdays"], false],
+      ["Pakke sekken", "Husk bøker, matboks og drikkeflaske.", "🎒", 10, "Morgen", "daily", ["weekdays"], false],
+      ["Pusse tenner kveld", "Puss før leggetid.", "🦷", 5, "Kveld", "daily", ["all"], false],
+      ["Finne frem klær", "Legg frem klær til neste dag.", "👚", 10, "Kveld", "daily", ["weekdays"], false],
+      ["Legge klær til vask", "Skitne klær skal i skittentøyet.", "🧺", 5, "Kveld", "daily", ["all"], false]
+    ]
+  },
+  {
+    id: "home",
+    title: "Husarbeid og helg",
+    description: "Oppgaver for felles ansvar hjemme, rydding og små bidrag i helgen.",
+    tasks: [
+      ["Rydde rommet", "Rydd gulv og flater så rommet er hyggelig.", "🧸", 20, "Helg", "weekly", ["weekend"], true],
+      ["Støvsuge eget rom", "Støvsug gulvet på rommet ditt.", "🧹", 25, "Helg", "weekly", ["weekend"], true],
+      ["Dekke bordet", "Gjør bordet klart til mat.", "🍽️", 10, "Helg", "daily", ["weekend"], false],
+      ["Rydde av bordet", "Hjelp til når måltidet er ferdig.", "🥣", 10, "Helg", "daily", ["weekend"], false],
+      ["Tømme oppvaskmaskinen", "Sett rent servise på plass.", "🍴", 20, "Bonus", "once", ["all"], true],
+      ["Ekstra rydding", "Rydd noe som ikke står på lista.", "✨", 15, "Bonus", "once", ["all"], true]
+    ]
+  },
+  {
+    id: "rewards",
+    title: "Belønninger",
+    description: "Et nøkternt startsett med belønninger familien kan justere etter egne regler.",
+    rewards: [
+      ["15 min ekstra skjermtid", "Ekstra tid avtales og gis av voksen.", "🎮", 20, "Skjermtid"],
+      ["30 min ekstra skjermtid", "Ekstra tid avtales og gis av voksen.", "🎮", 35, "Skjermtid"],
+      ["Velge film", "Du får velge film til en familiekveld.", "🎬", 60, "Aktivitet"],
+      ["Velge middag", "Du får velge en middag familien lager.", "🍝", 75, "Aktivitet"],
+      ["Liten overraskelse", "En liten avtalt overraskelse.", "🎁", 150, "Annet"]
+    ]
+  }
+];
+
 let state = loadState();
 let view = {
   mode: localStorage.getItem(DEVICE_PROFILE_KEY) || "home",
@@ -132,6 +174,7 @@ let view = {
   adultUnlocked: false,
   editingTaskId: null,
   editingRewardId: null,
+  editingChildId: null,
   creatingTask: false,
   taskFilters: { search: "", category: "all", child: "all", status: "all" },
   avatarPickerChildId: null,
@@ -172,10 +215,10 @@ function normalizeLocalState(savedState = {}) {
   return {
     familyId: savedState.familyId || "local-family",
     parentPinHash: savedState.parentPinHash || PIN_HASH,
-    children: savedState.children || childrenSeed,
-    tasks: savedState.tasks || taskSeeds,
+    children: normalizeChildren(savedState.children || childrenSeed),
+    tasks: normalizeTasks(savedState.tasks || taskSeeds),
     completions: savedState.completions || [],
-    rewards: savedState.rewards || rewardSeeds,
+    rewards: normalizeRewards(savedState.rewards || rewardSeeds),
     redemptions: savedState.redemptions || [],
     transactions: savedState.transactions || [],
     history: savedState.history || [],
@@ -184,6 +227,37 @@ function normalizeLocalState(savedState = {}) {
     createdAt: savedState.createdAt || new Date().toISOString(),
     updatedAt: savedState.updatedAt || new Date().toISOString()
   };
+}
+
+function normalizeChildren(children) {
+  return children.map((child, index) => ({
+    ...child,
+    id: child.id || `child-${index + 1}`,
+    name: child.name || `Barn ${index + 1}`,
+    avatar: child.avatar || AVATAR_ICONS[index % AVATAR_ICONS.length],
+    color: child.color || CHILD_COLORS[index % CHILD_COLORS.length],
+    pointsBalance: Number(child.pointsBalance) || 0,
+    lifetimePoints: Number(child.lifetimePoints) || 0,
+    streak: Number(child.streak) || 0,
+    active: child.active !== false
+  }));
+}
+
+function normalizeTasks(tasks) {
+  return tasks.map((task, index) => ({
+    ...task,
+    assignedChildren: Array.isArray(task.assignedChildren) ? task.assignedChildren : allChildren,
+    active: task.active !== false,
+    sortOrder: Number(task.sortOrder) || index + 1
+  }));
+}
+
+function normalizeRewards(rewards) {
+  return rewards.map((reward) => ({
+    ...reward,
+    assignedChildren: Array.isArray(reward.assignedChildren) ? reward.assignedChildren : allChildren,
+    active: reward.active !== false
+  }));
 }
 
 function saveState() {
@@ -221,7 +295,7 @@ function renderHome() {
         <h1>Dagens oppdrag</h1>
         <p>Barna velger sin egen profil og ser egne oppgaver der. Voksen kan styre alt fra et eget område med PIN.</p>
         <div class="hero-stats">
-          <div class="stat"><strong>${state.children.length}</strong><span>barn</span></div>
+          <div class="stat"><strong>${activeChildren().length}</strong><span>barn</span></div>
           <div class="stat"><strong>${state.tasks.filter((task) => task.active && !task.hiddenFromChildren).length}</strong><span>aktive oppgaver</span></div>
           <div class="stat"><strong>${pendingApprovals().length}</strong><span>venter på voksen</span></div>
         </div>
@@ -238,7 +312,7 @@ function renderHome() {
       </div>
     </section>
     <section class="profile-grid">
-      ${state.children.map((child) => childCard(child)).join("")}
+      ${activeChildren().map((child) => childCard(child)).join("") || `<div class="empty">Ingen aktive barneprofiler. Gå til voksenpanelet for å legge til barn.</div>`}
     </section>
   `;
 }
@@ -683,7 +757,7 @@ function adultTabContent() {
 function adultOverview() {
   return `
     <section class="dashboard-grid">
-      ${state.children.map((child) => {
+      ${activeChildren().map((child) => {
         const stats = childStats(child.id);
         const waiting = pendingApprovals().filter((item) => item.childId === child.id).length;
         return `
@@ -699,7 +773,7 @@ function adultOverview() {
             </div>
           </article>
         `;
-      }).join("")}
+      }).join("") || `<div class="empty">Ingen aktive barn ennå.</div>`}
     </section>
   `;
 }
@@ -817,7 +891,7 @@ function adultTasks() {
               <tr>
                 <td>${item.icon} <strong>${item.title}</strong><br><span class="small">${item.points} stjerner</span></td>
                 <td>${frequencyLabel(item.frequency)}<br><span class="small">${item.category}</span></td>
-                <td>${item.assignedChildren.map((id) => getChild(id).name).join(", ")}</td>
+                <td>${item.assignedChildren.map((id) => getChild(id)?.name || "Ukjent").join(", ")}</td>
                 <td>${taskStatusText(item)}</td>
                 <td><button class="btn secondary" data-action="edit-task" data-id="${item.id}">Endre</button></td>
               </tr>
@@ -987,18 +1061,33 @@ function rewardForm(reward) {
 }
 
 function adultChildren() {
+  const editingChild = view.editingChildId ? getChild(view.editingChildId) : null;
   return `
+    <section class="panel">
+      <div class="section-title compact-title">
+        <div>
+          <h2>${editingChild ? "Endre barn" : "Legg til barn"}</h2>
+          <p class="muted">${editingChild ? "Oppdater navn, ikon, farge og om profilen skal være synlig." : "Nye barn legges automatisk til på aktive oppgaver og belønninger."}</p>
+        </div>
+        ${editingChild ? `<button class="btn secondary" type="button" data-action="cancel-edit-child">Avbryt</button>` : ""}
+      </div>
+      ${childForm(editingChild)}
+    </section>
     <section class="dashboard-grid">
       ${state.children.map((child) => `
         <article class="card">
           <div class="brand">
             <div class="avatar" style="background:${child.color}22">${child.avatar}</div>
-            <div><h3>${child.name}</h3><p class="muted">${currentLevel(child.lifetimePoints).name}</p></div>
+            <div><h3>${child.name}</h3><p class="muted">${child.active ? currentLevel(child.lifetimePoints).name : "Skjult profil"}</p></div>
           </div>
           <div class="pill-row">
             <span class="pill">${child.pointsBalance} saldo</span>
             <span class="pill">${child.lifetimePoints} livstid</span>
             <span class="pill">${child.streak} streak</span>
+            <span class="pill ${child.active ? "done" : "rejected"}">${child.active ? "Aktiv" : "Inaktiv"}</span>
+          </div>
+          <div class="actions" style="margin-top:14px">
+            <button class="btn secondary" data-action="edit-child" data-child="${child.id}">Endre profil</button>
           </div>
           <form data-form="points" class="form-grid" style="grid-template-columns:1fr;margin-top:14px">
             <input type="hidden" name="childId" value="${child.id}">
@@ -1021,6 +1110,31 @@ function adultChildren() {
         </article>
       `).join("")}
     </section>
+  `;
+}
+
+function childForm(child) {
+  const nextIndex = state.children.length;
+  const avatar = child?.avatar || AVATAR_ICONS[nextIndex % AVATAR_ICONS.length];
+  const color = child?.color || CHILD_COLORS[nextIndex % CHILD_COLORS.length];
+  return `
+    <form data-form="child" class="form-grid">
+      <input type="hidden" name="id" value="${child?.id || ""}">
+      ${field("name", "Navn", child?.name || "", "text")}
+      ${iconSelect("avatar", "Ikon", avatar, AVATAR_ICONS)}
+      <div class="field">
+        <label>Farge</label>
+        <input name="color" type="color" value="${escapeAttr(color)}" required>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <div class="check-row">${checkPill("active", "yes", "Synlig profil", child?.active ?? true)}</div>
+      </div>
+      <div class="actions" style="grid-column:1/-1">
+        <button class="btn" type="submit">${child ? "Lagre barn" : "Legg til barn"}</button>
+        ${child ? `<button class="btn secondary" type="button" data-action="cancel-edit-child">Avbryt</button>` : ""}
+      </div>
+    </form>
   `;
 }
 
@@ -1062,6 +1176,23 @@ function adultSettings() {
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
         <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Startpakker</h2>
+      <p class="muted">Legg inn standard oppgaver og belønninger for en ny familie. Appen hopper over elementer som allerede finnes.</p>
+      <div class="dashboard-grid starter-grid">
+        ${STARTER_PACKAGES.map((pack) => `
+          <article class="card starter-card">
+            <h3>${pack.title}</h3>
+            <p class="muted">${pack.description}</p>
+            <div class="pill-row">
+              ${pack.tasks ? `<span class="pill">${pack.tasks.length} oppgaver</span>` : ""}
+              ${pack.rewards ? `<span class="pill">${pack.rewards.length} belønninger</span>` : ""}
+            </div>
+            <button class="btn secondary" data-action="apply-starter" data-id="${pack.id}">Legg inn pakke</button>
+          </article>
+        `).join("")}
       </div>
     </section>
     <section class="panel">
@@ -1416,7 +1547,7 @@ function saveTask(form) {
     createdAt: current?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  if (!task.assignedChildren.length) task.assignedChildren = allChildren;
+  if (!task.assignedChildren.length) task.assignedChildren = activeChildIds();
   if (current) Object.assign(current, task);
   else state.tasks.push(task);
   view.editingTaskId = null;
@@ -1442,13 +1573,136 @@ function saveReward(form) {
     createdAt: current?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  if (!reward.assignedChildren.length) reward.assignedChildren = allChildren;
+  if (!reward.assignedChildren.length) reward.assignedChildren = activeChildIds();
   if (current) Object.assign(current, reward);
   else state.rewards.push(reward);
   view.editingRewardId = null;
   saveState();
   showToast("Belønningen er lagret.");
   render();
+}
+
+function saveChild(form) {
+  const data = new FormData(form);
+  const current = getChild(data.get("id"));
+  const name = String(data.get("name") || "").trim();
+  if (!name) return showToast("Barnet må ha et navn.");
+
+  if (current) {
+    current.name = name;
+    current.avatar = data.get("avatar") || current.avatar;
+    current.color = data.get("color") || current.color;
+    current.active = data.get("active") === "yes";
+    if (!current.active && view.childId === current.id) {
+      view.mode = "home";
+      view.childId = null;
+    }
+    showToast("Barnet er oppdatert.");
+  } else {
+    const child = {
+      id: uniqueChildId(name),
+      name,
+      avatar: data.get("avatar") || AVATAR_ICONS[state.children.length % AVATAR_ICONS.length],
+      color: data.get("color") || CHILD_COLORS[state.children.length % CHILD_COLORS.length],
+      pointsBalance: 0,
+      lifetimePoints: 0,
+      streak: 0,
+      active: data.get("active") === "yes"
+    };
+    state.children.push(child);
+    assignChildToExistingItems(child.id);
+    showToast(`${child.name} er lagt til.`);
+  }
+
+  view.editingChildId = null;
+  saveState();
+  render();
+}
+
+function assignChildToExistingItems(childId) {
+  state.tasks.forEach((task) => {
+    if (task.active && !task.assignedChildren.includes(childId)) task.assignedChildren.push(childId);
+  });
+  state.rewards.forEach((reward) => {
+    if (reward.active && !reward.assignedChildren.includes(childId)) reward.assignedChildren.push(childId);
+  });
+}
+
+function uniqueChildId(name) {
+  const base = slugify(name) || `barn-${state.children.length + 1}`;
+  let id = base;
+  let counter = 2;
+  while (getChild(id)) {
+    id = `${base}-${counter}`;
+    counter += 1;
+  }
+  return id;
+}
+
+function applyStarterPackage(packageId) {
+  const pack = STARTER_PACKAGES.find((item) => item.id === packageId);
+  if (!pack) return;
+  const childIds = activeChildIds();
+  if (!childIds.length) return showToast("Legg til minst ett aktivt barn først.");
+  let addedTasks = 0;
+  let addedRewards = 0;
+
+  (pack.tasks || []).forEach((template) => {
+    const exists = state.tasks.some((task) => sameText(task.title, template[0]) && task.category === template[4]);
+    if (exists) return;
+    state.tasks.push(taskFromTemplate(template, childIds));
+    addedTasks += 1;
+  });
+
+  (pack.rewards || []).forEach((template) => {
+    const exists = state.rewards.some((reward) => sameText(reward.title, template[0]) && reward.type === template[4]);
+    if (exists) return;
+    state.rewards.push(rewardFromTemplate(template, childIds));
+    addedRewards += 1;
+  });
+
+  if (!addedTasks && !addedRewards) {
+    showToast("Alt i denne pakken finnes allerede.");
+    return;
+  }
+  saveState();
+  showToast(`La til ${addedTasks} oppgaver og ${addedRewards} belønninger.`);
+  render();
+}
+
+function taskFromTemplate(template, assignedChildren) {
+  return {
+    id: `task-${crypto.randomUUID()}`,
+    title: template[0],
+    description: template[1],
+    icon: template[2],
+    points: template[3],
+    category: template[4],
+    frequency: template[5],
+    days: template[6],
+    assignedChildren: [...assignedChildren],
+    requiresApproval: template[7],
+    repeatable: template[5] === "once",
+    active: true,
+    sortOrder: state.tasks.length + 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function rewardFromTemplate(template, assignedChildren) {
+  return {
+    id: `reward-${crypto.randomUUID()}`,
+    title: template[0],
+    description: template[1],
+    icon: template[2],
+    cost: template[3],
+    type: template[4],
+    assignedChildren: [...assignedChildren],
+    active: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
 }
 
 function childPeriodTasks(childId, frequency) {
@@ -1649,6 +1903,14 @@ function categoryCompleteToday(childId, category) {
   return tasks.length > 0 && tasks.every((item) => ["completed", "approved"].includes(item.status));
 }
 
+function activeChildren() {
+  return state.children.filter((child) => child.active !== false);
+}
+
+function activeChildIds() {
+  return activeChildren().map((child) => child.id);
+}
+
 function getChild(id) {
   return state.children.find((child) => child.id === id);
 }
@@ -1824,6 +2086,23 @@ function escapeAttr(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 }
 
+function slugify(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/æ/g, "ae")
+    .replace(/ø/g, "o")
+    .replace(/å/g, "a")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function sameText(a, b) {
+  return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+}
+
 app.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
@@ -1837,6 +2116,7 @@ app.addEventListener("click", (event) => {
     render();
   }
   if (action === "open-child") {
+    if (getChild(child)?.active === false) return;
     view.mode = "child";
     view.childId = child;
     view.childTab = "tasks";
@@ -1874,6 +2154,7 @@ app.addEventListener("click", (event) => {
     view.editingTaskId = null;
     view.creatingTask = false;
     view.editingRewardId = null;
+    view.editingChildId = null;
     render();
   }
   if (action === "complete-task") completeTask(child, task);
@@ -1908,6 +2189,17 @@ app.addEventListener("click", (event) => {
   if (action === "cancel-edit-reward") {
     view.editingRewardId = null;
     render();
+  }
+  if (action === "edit-child") {
+    view.editingChildId = child;
+    render();
+  }
+  if (action === "cancel-edit-child") {
+    view.editingChildId = null;
+    render();
+  }
+  if (action === "apply-starter" && confirm("Vil du legge inn denne startpakken? Eksisterende oppgaver og belønninger blir ikke slettet.")) {
+    applyStarterPackage(id);
   }
   if (action === "set-device-child") {
     setDeviceProfile(`child:${child}`);
@@ -2028,6 +2320,7 @@ app.addEventListener("submit", async (event) => {
   }
   if (form.dataset.form === "task") saveTask(form);
   if (form.dataset.form === "reward") saveReward(form);
+  if (form.dataset.form === "child") saveChild(form);
   if (form.dataset.form === "points") {
     const data = new FormData(form);
     const direction = event.submitter?.value === "minus" ? -1 : 1;
@@ -2123,10 +2416,10 @@ function normalizeRemoteState(remoteState) {
   return {
     ...loadState(),
     ...remoteState,
-    children: remoteState.children || [],
-    tasks: remoteState.tasks || [],
+    children: normalizeChildren(remoteState.children || []),
+    tasks: normalizeTasks(remoteState.tasks || []),
     completions: remoteState.completions || [],
-    rewards: remoteState.rewards || [],
+    rewards: normalizeRewards(remoteState.rewards || []),
     redemptions: remoteState.redemptions || [],
     transactions: remoteState.transactions || [],
     history: remoteState.history || [],
@@ -2163,8 +2456,15 @@ if ("serviceWorker" in navigator) {
 }
 
 if (view.mode?.startsWith("child:")) {
-  view.childId = view.mode.replace("child:", "");
-  view.mode = "child";
+  const childId = view.mode.replace("child:", "");
+  if (getChild(childId)?.active === false) {
+    view.mode = "home";
+    view.childId = null;
+    localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+  } else {
+    view.childId = childId;
+    view.mode = "child";
+  }
 }
 if (view.mode === "adult") {
   view.mode = "adult";

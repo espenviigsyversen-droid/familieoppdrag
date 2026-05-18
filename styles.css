@@ -633,6 +633,10 @@ button:disabled {
   color: var(--ink);
 }
 
+.field input[type="color"] {
+  padding: 6px;
+}
+
 .field textarea {
   min-height: 84px;
   resize: vertical;
