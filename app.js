@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "40";
+const APP_VERSION = "41";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -41,6 +41,8 @@ const cloud = {
   serverTimestamp: null,
   unsubscribe: null,
   saveTimer: null,
+  pendingSave: false,
+  lastSavedAt: null,
   applyingRemote: false
 };
 
@@ -1639,7 +1641,10 @@ function settingsCloud() {
       </div>
       <p class="small">Firebase-prosjekt: ${escapeText(firebaseProjectLabel())}</p>
       <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
+      ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
+      ${cloud.error ? `<p class="small">Sky-feil: ${escapeText(cloud.error)}</p>` : ""}
       <div class="actions" style="margin-top:14px">
+        <button class="btn secondary" data-action="force-cloud-save">Lagre til sky nå</button>
         <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
       </div>
     </section>
@@ -2632,7 +2637,8 @@ function deviceProfileLabel() {
 
 function cloudStatusLabel() {
   if (!cloud.enabled) return "Lokal lagring";
-  if (cloud.ready) return `Synker med ${state.familyId || "familie"}`;
+  if (cloud.ready && cloud.pendingSave) return "Lagrer til sky ...";
+  if (cloud.ready) return `Synker med ${cloudFamilyId()}`;
   if (cloud.error) return "Lokal fallback";
   return cloud.status;
 }
@@ -2956,6 +2962,10 @@ app.addEventListener("click", (event) => {
   if (action === "refresh-app") {
     refreshApp();
   }
+  if (action === "force-cloud-save") {
+    cloud.pendingSave = true;
+    flushCloudSave();
+  }
   if (action === "choose-import") {
     app.querySelector("[data-import-file]")?.click();
   }
@@ -3164,8 +3174,9 @@ async function initFirebaseSync() {
     subscribeCloudState();
 
     cloud.ready = true;
-    cloud.status = `Synker med ${state.familyId}`;
+    cloud.status = `Synker med ${cloudFamilyId()}`;
     cloud.error = "";
+    if (cloud.pendingSave) queueCloudSave();
   } catch (error) {
     cloud.ready = false;
     cloud.error = error?.message || "Kunne ikke koble til Firestore";
@@ -3274,15 +3285,29 @@ function normalizeRemoteState(remoteState) {
 }
 
 function queueCloudSave() {
-  if (!cloud.enabled || !cloud.ready || cloud.applyingRemote || !cloud.docRef) return;
+  if (!cloud.enabled || cloud.applyingRemote) return;
+  cloud.pendingSave = true;
+  if (!cloud.ready || !cloud.docRef || !cloud.setDoc) return;
   window.clearTimeout(cloud.saveTimer);
   cloud.saveTimer = window.setTimeout(() => {
-    writeCloudState().catch((error) => {
-      cloud.error = error?.message || "Kunne ikke lagre i Firestore";
-      console.warn("Firestore save failed:", error);
-      render();
-    });
+    flushCloudSave();
   }, 350);
+}
+
+async function flushCloudSave() {
+  if (!cloud.enabled || cloud.applyingRemote || !cloud.ready || !cloud.docRef || !cloud.setDoc) return;
+  try {
+    await writeCloudState();
+    cloud.pendingSave = false;
+    cloud.lastSavedAt = new Date().toISOString();
+    cloud.error = "";
+    render();
+  } catch (error) {
+    cloud.pendingSave = true;
+    cloud.error = error?.message || "Kunne ikke lagre i Firestore";
+    console.warn("Firestore save failed:", error);
+    render();
+  }
 }
 
 async function writeCloudState() {
