@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "34";
+const APP_VERSION = "35";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -181,6 +181,8 @@ const STARTER_PACKAGES = [
 
 let state = loadState();
 let view = {
+  booting: true,
+  bootMessage: "Henter siste versjon og familiedata",
   mode: localStorage.getItem(DEVICE_PROFILE_KEY) || "home",
   childId: localStorage.getItem(DEVICE_PROFILE_KEY)?.startsWith("child:")
     ? localStorage.getItem(DEVICE_PROFILE_KEY).replace("child:", "")
@@ -365,7 +367,9 @@ function syncFamilyCodeInvite() {
 }
 
 function render() {
-  if (pendingFamilyCode() && state.setupCompleted) {
+  if (view.booting) {
+    renderLoading();
+  } else if (pendingFamilyCode() && state.setupCompleted) {
     renderDeviceConnect();
   } else if (!state.setupCompleted) {
     renderSetup();
@@ -378,6 +382,22 @@ function render() {
   } else {
     renderHome();
   }
+}
+
+function renderLoading() {
+  app.innerHTML = `
+    <section class="loading-screen" aria-live="polite">
+      <div class="loading-art">
+        <img src="icons/loading-family.svg?v=${APP_VERSION}" alt="">
+      </div>
+      <div class="loading-copy">
+        <p class="eyebrow">Familieoppdrag</p>
+        <h1>Gjør oppdragene klare</h1>
+        <p>${escapeText(view.bootMessage || "Starter appen")}</p>
+      </div>
+      <div class="loading-bar" aria-hidden="true"><span></span></div>
+    </section>
+  `;
 }
 
 function renderDeviceConnect() {
@@ -3002,6 +3022,8 @@ app.addEventListener("submit", async (event) => {
 async function initFirebaseSync() {
   if (!cloud.enabled) return;
   try {
+    view.bootMessage = "Kobler til Firestore";
+    render();
     const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged }, { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp }] = await Promise.all([
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js"),
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js"),
@@ -3029,6 +3051,8 @@ async function initFirebaseSync() {
       signInAnonymously(auth).catch(reject);
     });
 
+    view.bootMessage = "Henter familiedata";
+    render();
     const snapshot = await cloud.getDoc(cloud.docRef);
     if (snapshot.exists() && snapshot.data().state) {
       cloud.applyingRemote = true;
@@ -3044,12 +3068,10 @@ async function initFirebaseSync() {
     cloud.ready = true;
     cloud.status = `Synker med ${state.familyId}`;
     cloud.error = "";
-    render();
   } catch (error) {
     cloud.ready = false;
     cloud.error = error?.message || "Kunne ikke koble til Firestore";
     console.warn("Firestore sync unavailable:", error);
-    render();
   }
 }
 
@@ -3136,26 +3158,55 @@ async function writeCloudState() {
   }, { merge: true });
 }
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register(`./service-worker.js?v=${APP_VERSION}`).catch(() => {});
+async function registerServiceWorkerAndUpdate() {
+  if (!("serviceWorker" in navigator)) return;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
   });
+  try {
+    view.bootMessage = "Sjekker appversjon";
+    render();
+    const registration = await navigator.serviceWorker.register(`./service-worker.js?v=${APP_VERSION}`);
+    await registration.update();
+    if (registration.waiting) {
+      registration.waiting.postMessage({ type: "SKIP_WAITING" });
+    }
+  } catch (error) {
+    console.warn("Service worker update unavailable:", error);
+  }
 }
 
-if (view.mode?.startsWith("child:")) {
-  const childId = view.mode.replace("child:", "");
-  if (getChild(childId)?.active === false) {
+function validateStartupProfile() {
+  if (view.mode?.startsWith("child:")) {
+    view.childId = view.mode.replace("child:", "");
+    view.mode = "child";
+  }
+  const childId = view.childId || "";
+  if (view.mode === "child" && getChild(childId)?.active === false) {
     view.mode = "home";
     view.childId = null;
     localStorage.setItem(DEVICE_PROFILE_KEY, "home");
-  } else {
-    view.childId = childId;
-    view.mode = "child";
+  }
+  if (view.mode === "child" && !getChild(view.childId)) {
+    view.mode = "home";
+    view.childId = null;
+    localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+  }
+  if (view.mode === "adult") {
+    view.mode = "adult";
   }
 }
-if (view.mode === "adult") {
-  view.mode = "adult";
+
+async function startApp() {
+  render();
+  await registerServiceWorkerAndUpdate();
+  await initFirebaseSync();
+  validateStartupProfile();
+  view.booting = false;
+  render();
 }
 
-render();
-initFirebaseSync();
+startApp();
