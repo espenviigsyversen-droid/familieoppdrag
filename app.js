@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "36";
+const APP_VERSION = "37";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -62,7 +62,7 @@ const BADGE_DEFINITIONS = [
   { id: "task-50", icon: "🏆", name: "Oppdragshelt", description: "Fullfør 50 oppdrag.", isEarned: (childId) => completedTaskCount(childId) >= 50 },
   { id: "morning-master", icon: "🌅", name: "Morgenmester", description: "Fullfør alle morgenoppdragene i dag.", isEarned: (childId) => categoryCompleteToday(childId, "Morgen") },
   { id: "evening-hero", icon: "🌙", name: "Kveldshelt", description: "Fullfør alle kveldsoppdragene i dag.", isEarned: (childId) => categoryCompleteToday(childId, "Kveld") },
-  { id: "bonus-star", icon: "✨", name: "Bonusstjerne", description: "Fullfør et bonusoppdrag.", isEarned: (childId) => completedBonusCount(childId) >= 1 },
+  { id: "bonus-star", icon: "✨", name: "Ekstrastjerne", description: "Fullfør et ekstraoppdrag.", isEarned: (childId) => completedBonusCount(childId) >= 1 },
   { id: "reward-picker", icon: "🎁", name: "Belønningsvelger", description: "Få en belønning godkjent.", isEarned: (childId) => state.redemptions.some((item) => item.childId === childId && ["approved", "fulfilled"].includes(item.status)) }
 ];
 
@@ -629,18 +629,21 @@ function avatarPickerModal(child) {
 }
 
 function childTaskView(child) {
-  const daily = childPeriodTasks(child.id, "daily");
+  const daily = childPeriodTasks(child.id, "daily").filter((item) => item.task.category !== "Bonus");
   const weekly = childPeriodTasks(child.id, "weekly");
-  const bonus = childPeriodTasks(child.id, "once");
+  const bonus = [
+    ...childPeriodTasks(child.id, "daily").filter((item) => item.task.category === "Bonus"),
+    ...childPeriodTasks(child.id, "once")
+  ].sort((a, b) => a.task.sortOrder - b.task.sortOrder);
   return `
     ${groupedTaskSection("Dagens oppdrag", daily, child.id)}
     ${taskSection("Ukens oppdrag", weekly, child.id)}
-    ${taskSection("Bonusoppdrag", bonus, child.id)}
+    ${taskSection("Ekstraoppdrag", bonus, child.id)}
   `;
 }
 
 function groupedTaskSection(title, items, childId) {
-  const categories = ["Morgen", "Etter skole", "Kveld", "Helg", "Bonus"];
+  const categories = ["Morgen", "Etter skole", "Kveld", "Helg"];
   const grouped = categories
     .map((category) => ({
       category,
