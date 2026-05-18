@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "37";
+const APP_VERSION = "38";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -1185,6 +1185,7 @@ function filteredAdultTasks() {
 }
 
 function taskForm(task) {
+  const selectedDays = selectedTaskDays(task);
   return `
     <form data-form="task" class="form-grid">
       <input type="hidden" name="id" value="${task?.id || ""}">
@@ -1205,9 +1206,9 @@ function taskForm(task) {
       </div>
       <div class="field">
         <label>Dager</label>
-        <select name="days">
-          ${[["all", "Alle dager"], ["weekdays", "Hverdager"], ["weekend", "Helg"], ["monday", "Mandag"], ["tuesday", "Tirsdag"], ["wednesday", "Onsdag"], ["thursday", "Torsdag"], ["friday", "Fredag"], ["saturday", "Lørdag"], ["sunday", "Søndag"]].map(([value, label]) => `<option value="${value}" ${task?.days?.includes(value) ? "selected" : ""}>${label}</option>`).join("")}
-        </select>
+        <div class="check-row">
+          ${taskDayOptions().map(([value, label]) => checkPill("days", value, label, selectedDays.includes(value))).join("")}
+        </div>
       </div>
       <div class="field" style="grid-column:1/-1">
         <label>Beskrivelse</label>
@@ -1703,6 +1704,41 @@ function checkPill(name, value, label, checked) {
   return `<label class="check-pill"><input type="checkbox" name="${name}" value="${value}" ${checked ? "checked" : ""}>${label}</label>`;
 }
 
+function taskDayOptions() {
+  return [
+    ["all", "Alle dager"],
+    ["monday", "Mandag"],
+    ["tuesday", "Tirsdag"],
+    ["wednesday", "Onsdag"],
+    ["thursday", "Torsdag"],
+    ["friday", "Fredag"],
+    ["saturday", "Lørdag"],
+    ["sunday", "Søndag"]
+  ];
+}
+
+function selectedTaskDays(task) {
+  const days = task?.days?.length ? task.days : ["all"];
+  if (days.includes("all")) return ["all"];
+  const expanded = new Set(days);
+  if (days.includes("weekdays")) {
+    ["monday", "tuesday", "wednesday", "thursday", "friday"].forEach((day) => expanded.add(day));
+    expanded.delete("weekdays");
+  }
+  if (days.includes("weekend")) {
+    ["saturday", "sunday"].forEach((day) => expanded.add(day));
+    expanded.delete("weekend");
+  }
+  return taskDayOptions().map(([value]) => value).filter((value) => expanded.has(value));
+}
+
+function normalizeTaskDays(days) {
+  const selected = days.filter(Boolean);
+  if (!selected.length || selected.includes("all")) return ["all"];
+  const valid = new Set(taskDayOptions().map(([value]) => value));
+  return selected.filter((day) => valid.has(day) && day !== "all");
+}
+
 function completeTask(childId, taskId) {
   const task = getTask(taskId);
   const existing = findCompletion(task, childId);
@@ -1970,7 +2006,7 @@ function saveTask(form) {
     points: Number(data.get("points")),
     category: data.get("category"),
     frequency: data.get("frequency"),
-    days: [data.get("days")],
+    days: normalizeTaskDays(data.getAll("days")),
     assignedChildren: data.getAll("assignedChildren"),
     requiresApproval: data.get("requiresApproval") === "yes",
     repeatable: data.get("repeatable") === "yes",
