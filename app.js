@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "38";
+const APP_VERSION = "39";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -13,6 +13,7 @@ const APP_CONFIG = {
     stateCollection: "families",
     stateSubcollection: "appState",
     stateDocument: "current",
+    legacyFamilyIds: ["familieoppdrag", "local-family"],
     firebase: {
       apiKey: "AIzaSyAMPfQ9gX9rbuvcPsVjYVtq5IT_orjDBPs",
       authDomain: "home-tasks-app-18de3.firebaseapp.com",
@@ -3143,12 +3144,14 @@ async function initFirebaseSync() {
 
     view.bootMessage = "Henter familiedata";
     render();
-    const snapshot = await cloud.getDoc(cloud.docRef);
-    if (snapshot.exists() && snapshot.data().state) {
+    const remoteState = await loadBestCloudState();
+    if (remoteState) {
       cloud.applyingRemote = true;
-      state = normalizeRemoteState(snapshot.data().state);
+      state = normalizeRemoteState(remoteState);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       cloud.applyingRemote = false;
+      setCloudDocRef(state.familyId || "local-family");
+      await writeCloudState();
     } else {
       await writeCloudState();
     }
@@ -3165,10 +3168,10 @@ async function initFirebaseSync() {
   }
 }
 
-function setCloudDocRef() {
+function setCloudDocRef(familyId = state.familyId || "local-family") {
   if (!cloud.doc) return;
   const config = APP_CONFIG.cloudSync;
-  cloud.familyId = state.familyId || "local-family";
+  cloud.familyId = familyId || "local-family";
   cloud.docRef = cloud.doc(
     cloud.db,
     config.stateCollection,
@@ -3176,6 +3179,44 @@ function setCloudDocRef() {
     config.stateSubcollection,
     config.stateDocument
   );
+}
+
+async function loadBestCloudState() {
+  const familyIds = cloudFamilyCandidates();
+  const snapshots = await Promise.all(familyIds.map(async (familyId) => {
+    const docRef = cloudDocRefForFamily(familyId);
+    const snapshot = await cloud.getDoc(docRef);
+    const remoteState = snapshot.exists() ? snapshot.data()?.state : null;
+    return remoteState ? { familyId, state: remoteState } : null;
+  }));
+  const candidates = snapshots.filter(Boolean);
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => remoteStateTime(b.state) - remoteStateTime(a.state));
+  return candidates[0].state;
+}
+
+function cloudFamilyCandidates() {
+  const ids = [
+    state.familyId || "local-family",
+    ...(APP_CONFIG.cloudSync.legacyFamilyIds || [])
+  ];
+  return [...new Set(ids.filter(Boolean))];
+}
+
+function cloudDocRefForFamily(familyId) {
+  const config = APP_CONFIG.cloudSync;
+  return cloud.doc(
+    cloud.db,
+    config.stateCollection,
+    familyId,
+    config.stateSubcollection,
+    config.stateDocument
+  );
+}
+
+function remoteStateTime(remoteState) {
+  const time = new Date(remoteState?.updatedAt || remoteState?.createdAt || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
 }
 
 function subscribeCloudState() {
