@@ -759,6 +759,50 @@ button:disabled {
   background: #ffe3ea;
 }
 
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: var(--primary-dark);
+  font-size: 0.86rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.sync-pill.done {
+  background: #d8fbef;
+  color: #046c56;
+}
+
+.sync-pill.pending {
+  background: #fff4cc;
+  color: #6b4400;
+}
+
+.sync-pill.rejected {
+  background: #ffe3ea;
+  color: #8f1234;
+}
+
+.diagnosis-box {
+  margin-top: 14px;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.diagnosis-box pre {
+  margin: 0;
+  color: var(--ink);
+  font: 0.85rem/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+}
+
 .tabs {
   display: flex;
   gap: 8px;

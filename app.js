@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "42";
+const APP_VERSION = "43";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -907,6 +907,7 @@ function renderAdult() {
         </div>
       </div>
       <div class="actions">
+        <span class="sync-pill ${cloudStatusClass()}">${cloudStatusLabel()}</span>
         <button class="btn secondary" data-action="set-device-adult">📌 Standard</button>
         <button class="btn secondary" data-action="home">🏠</button>
         <button class="btn danger" data-action="lock-adult">Lås</button>
@@ -1436,7 +1437,7 @@ function settingsMenu() {
     ["backup", "Backup og flytting", "Eksporter, importer og flytt data"],
     ["starter", "Startpakker", "Legg inn standard oppgaver og belønninger"],
     ["levels", "Nivåer", "Navn og grenser for livstidsstjerner"],
-    ["cloud", "App og sky", "Miljø, Firebase, synk og appoppdatering"],
+    ["cloud", "App, sky og diagnose", "Miljø, Firebase, synk og feilsøking"],
     ["reset", "Nullstilling", "Start helt på nytt"]
   ];
   return `
@@ -1626,12 +1627,13 @@ function settingsLevels() {
 }
 
 function settingsCloud() {
+  const diagnosis = syncDiagnosisText();
   return `
     <section class="panel">
       <div class="section-title compact-title">
         <div>
-          <h2>App og sky</h2>
-          <p class="muted">Miljø, Firebase og appoppdatering.</p>
+          <h2>App, sky og diagnose</h2>
+          <p class="muted">Miljø, Firebase, synk og feilsøking.</p>
         </div>
         ${settingsBackButton()}
       </div>
@@ -1643,8 +1645,12 @@ function settingsCloud() {
       <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
       ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
       ${cloud.error ? `<p class="small">Sky-feil: ${escapeText(cloud.error)}</p>` : ""}
+      <div class="diagnosis-box">
+        <pre>${escapeText(diagnosis)}</pre>
+      </div>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="force-cloud-save">Lagre til sky nå</button>
+        <button class="btn secondary" data-action="copy-diagnosis">Kopier diagnose</button>
         <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
       </div>
     </section>
@@ -2643,6 +2649,12 @@ function cloudStatusLabel() {
   return cloud.status;
 }
 
+function cloudStatusClass() {
+  if (cloud.ready && !cloud.pendingSave) return "done";
+  if (cloud.error) return "rejected";
+  return "pending";
+}
+
 function cloudPathLabel() {
   const config = APP_CONFIG.cloudSync;
   return `${config.stateCollection}/${cloudFamilyId()}/${config.stateSubcollection}/${config.stateDocument}`;
@@ -2659,6 +2671,39 @@ function environmentLabel() {
 function firebaseProjectLabel() {
   if (!APP_CONFIG.cloudSync.enabled) return "Av";
   return APP_CONFIG.cloudSync.firebase?.projectId || "Ikke satt";
+}
+
+function syncDiagnosisText() {
+  return [
+    `App: ${APP_CONFIG.appName}`,
+    `Versjon: ${APP_VERSION}`,
+    `Miljø: ${environmentLabel()}`,
+    `Firebase-prosjekt: ${firebaseProjectLabel()}`,
+    `Sky aktiv: ${cloud.enabled ? "ja" : "nei"}`,
+    `Sky klar: ${cloud.ready ? "ja" : "nei"}`,
+    `Venter på sky-lagring: ${cloud.pendingSave ? "ja" : "nei"}`,
+    `Sky-status: ${cloudStatusLabel()}`,
+    `Sky-sti: ${cloudPathLabel()}`,
+    `Sist lagret til sky: ${cloud.lastSavedAt ? formatDate(cloud.lastSavedAt) : "aldri i denne økten"}`,
+    `Sky-feil: ${cloud.error || "ingen"}`,
+    `Familie-id: ${state.familyId || "-"}`,
+    `Familiekode: ${state.familyCode || "-"}`,
+    `Datamodell: ${state.schemaVersion || SCHEMA_VERSION}`,
+    `Barn: ${state.children?.length || 0}`,
+    `Oppgaver: ${state.tasks?.length || 0}`,
+    `Fullføringer: ${state.completions?.length || 0}`,
+    `Sist oppdatert: ${state.updatedAt ? formatDate(state.updatedAt) : "-"}`
+  ].join("\n");
+}
+
+async function copyDiagnosis() {
+  const text = syncDiagnosisText();
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Diagnose kopiert.");
+  } catch {
+    prompt("Kopier diagnose:", text);
+  }
 }
 
 function setDeviceProfile(profile) {
@@ -2965,6 +3010,9 @@ app.addEventListener("click", (event) => {
   if (action === "force-cloud-save") {
     cloud.pendingSave = true;
     flushCloudSave();
+  }
+  if (action === "copy-diagnosis") {
+    copyDiagnosis();
   }
   if (action === "choose-import") {
     app.querySelector("[data-import-file]")?.click();
