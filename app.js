@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "48";
+const APP_VERSION = "49";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -353,7 +353,9 @@ function normalizeInviteCodes(invites, familyCode) {
     type: invite.type || "device",
     status: invite.status || "active",
     createdAt: invite.createdAt || new Date().toISOString(),
-    expiresAt: invite.expiresAt || null
+    expiresAt: invite.expiresAt || null,
+    usedByUid: invite.usedByUid || null,
+    usedAt: invite.usedAt || null
   }));
   if (!normalized.length && familyCode) {
     normalized.push({
@@ -448,7 +450,9 @@ function renderLoading() {
 
 function renderDeviceConnect() {
   const code = pendingFamilyCode();
+  const adultInviteCode = pendingAdultInviteCode();
   const matchesFamily = normalizeFamilyCode(code) === normalizeFamilyCode(state.familyCode);
+  const adultInvite = adultInviteCode ? findActiveInvite(adultInviteCode, "adult") : null;
   const lookupFailed = Boolean(cloud.familyCodeLookupError);
   app.innerHTML = `
     <header class="topbar setup-topbar">
@@ -462,11 +466,20 @@ function renderDeviceConnect() {
     </header>
     <section class="setup-shell">
       <div class="setup-intro">
-        <h2>${matchesFamily ? "Velg startside" : "Fant ikke familien"}</h2>
-        <p>${matchesFamily ? `${escapeText(state.familyName)} er klar på denne enheten. Velg hva appen skal åpne med.` : "Denne versjonen kan bare koble til en familie som allerede er lastet inn på enheten. Når flerfamilie-synk er på plass, kan denne lenken hente riktig familie automatisk."}</p>
+        <h2>${matchesFamily ? adultInviteCode ? "Vokseninvitasjon" : "Velg startside" : "Fant ikke familien"}</h2>
+        <p>${matchesFamily ? adultInviteCode ? `${escapeText(state.familyName)} er funnet. Logg inn med Google for å bli lagt til som voksen.` : `${escapeText(state.familyName)} er klar på denne enheten. Velg hva appen skal åpne med.` : "Appen forsøkte å finne familien med familiekoden i Firestore."}</p>
       </div>
       <div class="panel setup-form">
-        ${matchesFamily ? `
+        ${matchesFamily && adultInviteCode ? `
+          <div class="setup-block">
+            <h3>${adultInvite ? "Invitasjonen er klar" : "Invitasjonen er ikke gyldig"}</h3>
+            <p class="muted">${adultInvite ? "Denne voksne får tilgang til voksenpanelet etter Google-innlogging." : "Be eier lage en ny vokseninvitasjon fra Familie og voksne."}</p>
+            <div class="actions" style="margin-top:14px">
+              <button class="btn" data-action="accept-adult-invite" ${adultInvite ? "" : "disabled"}>Logg inn med Google</button>
+              <button class="btn secondary" data-action="cancel-connect">Avbryt</button>
+            </div>
+          </div>
+        ` : matchesFamily ? `
           <div class="setup-block">
             <h3>${escapeText(state.familyName)}</h3>
             <p class="muted">Du kan endre standardprofil senere fra hjemskjermen eller barnets profil.</p>
@@ -1517,6 +1530,7 @@ function settingsMenu() {
 
 function settingsFamily() {
   const adults = activeAdultUsers();
+  const adultInvites = activeInvites("adult");
   return `
     <section class="panel">
       <div class="section-title compact-title">
@@ -1557,6 +1571,11 @@ function settingsFamily() {
             </div>
           `).join("") : `<p class="small">Ingen voksne er lagt til ennå.</p>`}
         </div>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn secondary" type="button" data-action="copy-adult-invite">Kopier vokseninvitasjon</button>
+          <button class="btn secondary" type="button" data-action="new-adult-invite">Lag ny vokseninvitasjon</button>
+        </div>
+        <p class="small">${adultInvites.length ? `Aktiv vokseninvitasjon: ${adultInvites[0].code}` : "Ingen aktiv vokseninvitasjon."}</p>
       </div>
       <p class="small">Datamodell: versjon ${state.schemaVersion || SCHEMA_VERSION}. Voksne: ${state.adultUsers?.length || 0}. Enheter: ${state.familyDevices?.length || 0}. Invitasjoner: ${state.inviteCodes?.length || 0}.</p>
     </section>
@@ -2770,6 +2789,20 @@ function activeAdultUsers() {
   return (state.adultUsers || []).filter((user) => user.status !== "removed");
 }
 
+function activeInvites(type) {
+  const now = Date.now();
+  return (state.inviteCodes || []).filter((invite) => {
+    if (invite.type !== type || invite.status !== "active") return false;
+    if (!invite.expiresAt) return true;
+    return new Date(invite.expiresAt).getTime() > now;
+  });
+}
+
+function findActiveInvite(code, type) {
+  const normalizedCode = normalizeFamilyCode(code);
+  return activeInvites(type).find((invite) => normalizeFamilyCode(invite.code) === normalizedCode) || null;
+}
+
 function familyOwner() {
   return activeAdultUsers().find((user) => user.role === "owner") || null;
 }
@@ -2856,6 +2889,40 @@ async function signInGoogleOwner() {
   }
 }
 
+async function acceptAdultInvite() {
+  const inviteCode = pendingAdultInviteCode();
+  const invite = findActiveInvite(inviteCode, "adult");
+  if (!invite) {
+    showToast("Vokseninvitasjonen er ikke gyldig.");
+    return;
+  }
+  if (!cloud.auth || !cloud.GoogleAuthProvider || !cloud.signInWithPopup) {
+    showToast("Google-innlogging er ikke klar ennå.");
+    return;
+  }
+  try {
+    const provider = new cloud.GoogleAuthProvider();
+    provider.setCustomParameters?.({ prompt: "select_account" });
+    const result = await cloud.signInWithPopup(cloud.auth, provider);
+    cloud.authUser = normalizeAuthUser(result.user);
+    registerGoogleAdult(result.user, "adult");
+    invite.status = "used";
+    invite.usedByUid = result.user.uid;
+    invite.usedAt = new Date().toISOString();
+    saveState();
+    clearPendingFamilyCode();
+    view.mode = "adult";
+    view.adultUnlocked = true;
+    view.adultTab = "overview";
+    showToast("Voksen er lagt til familien.");
+    render();
+  } catch (error) {
+    cloud.error = error?.message || "Kunne ikke godta vokseninvitasjon";
+    showToast("Google-innlogging feilet.");
+    render();
+  }
+}
+
 function syncDiagnosisText() {
   return [
     `App: ${APP_CONFIG.appName}`,
@@ -2881,6 +2948,8 @@ function syncDiagnosisText() {
     `Sky-feil: ${cloud.error || "ingen"}`,
     `Google-bruker: ${cloud.authUser?.isAnonymous ? "anonym" : cloud.authUser?.email || "ikke innlogget"}`,
     `Google-eier: ${googleOwnerLabel()}`,
+    `Voksne: ${activeAdultUsers().length}`,
+    `Aktive vokseninvitasjoner: ${activeInvites("adult").length}`,
     `Familie-id: ${state.familyId || "-"}`,
     `Familiekode: ${state.familyCode || "-"}`,
     `Datamodell: ${state.schemaVersion || SCHEMA_VERSION}`,
@@ -3016,10 +3085,17 @@ function pendingFamilyCode() {
   return params.get("familiekode") || params.get("join") || "";
 }
 
+function pendingAdultInviteCode() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("voksenkode") || params.get("adultInvite") || "";
+}
+
 function clearPendingFamilyCode() {
   const url = new URL(window.location.href);
   url.searchParams.delete("familiekode");
   url.searchParams.delete("join");
+  url.searchParams.delete("voksenkode");
+  url.searchParams.delete("adultInvite");
   window.history.replaceState({}, "", url);
 }
 
@@ -3031,6 +3107,32 @@ function familyLink() {
   return url.toString();
 }
 
+function adultInviteLink() {
+  const invite = ensureAdultInvite();
+  const url = new URL(familyLink());
+  url.searchParams.set("voksenkode", invite.code);
+  return url.toString();
+}
+
+function ensureAdultInvite() {
+  if (!Array.isArray(state.inviteCodes)) state.inviteCodes = [];
+  const existing = activeInvites("adult")[0];
+  if (existing) return existing;
+  const invite = {
+    id: crypto.randomUUID(),
+    code: createFamilyCode(),
+    type: "adult",
+    status: "active",
+    createdAt: new Date().toISOString(),
+    expiresAt: null,
+    usedByUid: null,
+    usedAt: null
+  };
+  state.inviteCodes.push(invite);
+  saveState();
+  return invite;
+}
+
 async function copyFamilyLink() {
   const link = familyLink();
   try {
@@ -3039,6 +3141,36 @@ async function copyFamilyLink() {
   } catch {
     prompt("Kopier koblingslenken:", link);
   }
+}
+
+async function copyAdultInviteLink() {
+  const link = adultInviteLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("Vokseninvitasjon kopiert.");
+  } catch {
+    prompt("Kopier vokseninvitasjon:", link);
+  }
+}
+
+function createNewAdultInvite() {
+  if (!Array.isArray(state.inviteCodes)) state.inviteCodes = [];
+  state.inviteCodes = state.inviteCodes.map((invite) =>
+    invite.type === "adult" && invite.status === "active" ? { ...invite, status: "revoked" } : invite
+  );
+  state.inviteCodes.push({
+    id: crypto.randomUUID(),
+    code: createFamilyCode(),
+    type: "adult",
+    status: "active",
+    createdAt: new Date().toISOString(),
+    expiresAt: null,
+    usedByUid: null,
+    usedAt: null
+  });
+  saveState();
+  showToast("Ny vokseninvitasjon er laget.");
+  render();
 }
 
 function connectDevice(profile) {
@@ -3184,6 +3316,9 @@ app.addEventListener("click", (event) => {
   }
   if (action === "connect-device") {
     connectDevice(button.dataset.profile);
+  }
+  if (action === "accept-adult-invite") {
+    acceptAdultInvite();
   }
   if (action === "cancel-gate") {
     view.gate = null;
@@ -3332,6 +3467,12 @@ app.addEventListener("click", (event) => {
   }
   if (action === "copy-family-link") {
     copyFamilyLink();
+  }
+  if (action === "copy-adult-invite") {
+    copyAdultInviteLink();
+  }
+  if (action === "new-adult-invite" && confirm("Vil du lage en ny vokseninvitasjon? Gamle vokseninvitasjoner blir deaktivert.")) {
+    createNewAdultInvite();
   }
   if (action === "new-family-code" && confirm("Vil du lage en ny familiekode? Gamle koblingslenker vil slutte å passe.")) {
     state.familyCode = createFamilyCode();
