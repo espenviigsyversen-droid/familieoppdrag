@@ -1,4 +1,4 @@
-const CACHE_NAME = "familieoppdrag-v50";
+const CACHE_NAME = "familieoppdrag-v51";
 const APP_SHELL = [
   "./",
   "./index.html",

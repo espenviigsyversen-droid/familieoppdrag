@@ -471,9 +471,34 @@ button:disabled {
   font-weight: 700;
 }
 
+.setup-progress {
+  display: flex;
+  gap: 7px;
+  margin-top: 24px;
+}
+
+.setup-progress span {
+  width: 28px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.setup-progress span.active,
+.setup-progress span.done {
+  background: #fff;
+}
+
 .setup-form {
   display: grid;
   gap: 18px;
+}
+
+.setup-step-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .setup-block {
@@ -488,6 +513,36 @@ button:disabled {
 .setup-options {
   display: grid;
   gap: 10px;
+}
+
+.setup-note,
+.setup-summary {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(108, 99, 255, 0.08);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.setup-summary {
+  display: grid;
+  gap: 10px;
+  background: #fff;
+}
+
+.setup-summary div {
+  display: grid;
+  gap: 3px;
+}
+
+.setup-summary span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.setup-actions {
+  justify-content: space-between;
 }
 
 .connect-options {

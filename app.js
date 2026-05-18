@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "50";
+const APP_VERSION = "51";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -211,6 +211,8 @@ let view = {
   creatingReward: false,
   creatingChild: false,
   taskFilters: { search: "", category: "all", child: "all", status: "all" },
+  setupStep: 0,
+  setupDraft: null,
   avatarPickerChildId: null,
   gate: null
 };
@@ -505,15 +507,11 @@ function renderDeviceConnect() {
 }
 
 function renderSetup() {
-  const packageOptions = STARTER_PACKAGES.map((pack) => `
-    <label class="setup-option">
-      <input type="checkbox" name="starterPackage" value="${pack.id}" checked>
-      <span>
-        <strong>${pack.title}</strong>
-        <small>${pack.description}</small>
-      </span>
-    </label>
-  `).join("");
+  ensureSetupDraft();
+  const steps = setupSteps();
+  const step = Math.min(Math.max(view.setupStep || 0, 0), steps.length - 1);
+  view.setupStep = step;
+  const current = steps[step];
 
   app.innerHTML = `
     <header class="topbar setup-topbar">
@@ -521,58 +519,159 @@ function renderSetup() {
         <div class="brand-mark">⭐</div>
         <div>
           <p class="eyebrow">Familieoppdrag</p>
-          <h1>Sett opp familien</h1>
+          <h1>Oppstartsveileder</h1>
         </div>
       </div>
     </header>
     <section class="setup-shell">
-      <div class="setup-intro">
-        <h2>Klar på noen minutter</h2>
-        <p>Legg inn familien, barna og en voksen-PIN. Etterpå kan alt justeres fra voksenpanelet.</p>
+      <div class="setup-intro setup-wizard-intro">
+        <h2>${current.hero}</h2>
+        <p>${current.description}</p>
+        <div class="setup-progress" aria-label="Steg ${step + 1} av ${steps.length}">
+          ${steps.map((item, index) => `<span class="${index === step ? "active" : index < step ? "done" : ""}"></span>`).join("")}
+        </div>
       </div>
       <form data-form="first-setup" class="panel setup-form">
-        <div class="setup-block auth-setup">
-          <h3>Voksen med Google</h3>
-          <p class="muted">Minst én voksen må logge inn med Google før familien kan deles til andre enheter.</p>
-          <div class="auth-status-card ${familyHasGoogleOwner() ? "ready" : "pending"}">
-            <div>
-              <strong>${familyHasGoogleOwner() ? "Google-eier er klar" : "Google-eier mangler"}</strong>
-              <small>${googleOwnerLabel()}</small>
-            </div>
-            <button class="btn secondary" type="button" data-action="google-owner-login">${familyHasGoogleOwner() ? "Bytt Google-konto" : "Logg inn med Google"}</button>
-          </div>
-        </div>
-        <div class="form-grid">
-          ${field("familyName", "Familienavn", state.familyName === "Familien" ? "" : state.familyName, "text")}
-          <div class="field">
-            <label>Ny voksen-PIN</label>
-            <input name="pin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" required>
-          </div>
-          <div class="field">
-            <label>Gjenta PIN</label>
-            <input name="repeatPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" required>
-          </div>
-        </div>
-        <div class="setup-block">
-          <h3>Barn</h3>
-          <div class="form-grid">
-            ${[0, 1, 2, 3, 4].map((index) => `
-              <div class="field">
-                <label>Barn ${index + 1}${index === 0 ? "" : " (valgfritt)"}</label>
-                <input name="childName" type="text" value="" ${index === 0 ? "required" : ""}>
-              </div>
-            `).join("")}
-          </div>
-        </div>
-        <div class="setup-block">
-          <h3>Startpakker</h3>
-          <div class="setup-options">${packageOptions}</div>
-        </div>
-        <div class="actions">
-          <button class="btn" type="submit">Start familien</button>
+        <div class="setup-step-label">Steg ${step + 1} av ${steps.length}</div>
+        ${setupStepContent(current.id)}
+        <div class="actions setup-actions">
+          ${step > 0 ? `<button class="btn secondary" type="button" data-action="setup-back">Tilbake</button>` : ""}
+          ${step < steps.length - 1 ? `<button class="btn" type="button" data-action="setup-next">Neste</button>` : `<button class="btn" type="submit">Start familien</button>`}
         </div>
       </form>
     </section>
+  `;
+}
+
+function setupSteps() {
+  return [
+    { id: "welcome", hero: "Velkommen", description: "Vi går gjennom det viktigste på noen minutter. Alt kan endres senere fra Innstillinger." },
+    { id: "google", hero: "Voksen", description: "En voksen logger inn med Google og blir familieeier. Dette gjør deling og sikkerhet ryddigere." },
+    { id: "family", hero: "Familien", description: "Gi familien et navn og fortell hvor mange barn som skal ha profiler." },
+    { id: "children", hero: "Barn", description: "Legg inn navn på barna. Du kan legge til, skjule og endre barn senere." },
+    { id: "packages", hero: "Maler", description: "Velg startpakker med oppgaver og belønninger. Alt kan redigeres etterpå." },
+    { id: "pin", hero: "PIN", description: "Sett en voksen-PIN som beskytter voksenpanelet på felles enheter." },
+    { id: "ready", hero: "Klar", description: "Se over valgene dine. Etterpå kan du invitere flere voksne og koble til barnas enheter." }
+  ];
+}
+
+function ensureSetupDraft() {
+  if (view.setupDraft) return;
+  view.setupDraft = {
+    familyName: state.familyName === "Familien" ? "" : state.familyName || "",
+    childCount: 2,
+    childNames: ["", "", "", "", ""],
+    starterPackages: STARTER_PACKAGES.map((pack) => pack.id),
+    pin: "",
+    repeatPin: ""
+  };
+}
+
+function setupStepContent(stepId) {
+  const draft = view.setupDraft;
+  if (stepId === "welcome") {
+    return `
+      <div class="setup-block">
+        <h3>Velkommen til Familieoppdrag</h3>
+        <p class="muted">Veilederen hjelper deg å lage en familie, legge inn barn, velge startmaler og sette voksen-PIN.</p>
+        <div class="setup-note">Du kan endre navn, oppgaver, belønninger, barn, PIN og deling senere fra voksenpanelet.</div>
+      </div>
+    `;
+  }
+  if (stepId === "google") {
+    return `
+      <div class="setup-block auth-setup">
+        <h3>Voksen med Google</h3>
+        <p class="muted">Minst én voksen må logge inn med Google før familien kan deles til andre enheter.</p>
+        <div class="auth-status-card ${familyHasGoogleOwner() ? "ready" : "pending"}">
+          <div>
+            <strong>${familyHasGoogleOwner() ? "Google-eier er klar" : "Google-eier mangler"}</strong>
+            <small>${googleOwnerLabel()}</small>
+          </div>
+          <button class="btn secondary" type="button" data-action="google-owner-login">${familyHasGoogleOwner() ? "Bytt Google-konto" : "Logg inn med Google"}</button>
+        </div>
+      </div>
+    `;
+  }
+  if (stepId === "family") {
+    return `
+      <div class="setup-block">
+        <h3>Familie</h3>
+        <div class="form-grid">
+          ${field("familyName", "Familienavn", draft.familyName, "text")}
+          <div class="field">
+            <label>Antall barn</label>
+            <select name="childCount">
+              ${[1, 2, 3, 4, 5].map((count) => `<option value="${count}" ${Number(draft.childCount) === count ? "selected" : ""}>${count}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  if (stepId === "children") {
+    const count = Number(draft.childCount) || 1;
+    return `
+      <div class="setup-block">
+        <h3>Barn</h3>
+        <div class="form-grid">
+          ${Array.from({ length: count }, (_, index) => `
+            <div class="field">
+              <label>Barn ${index + 1}</label>
+              <input name="childName" type="text" value="${escapeAttr(draft.childNames[index] || "")}" required>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+  if (stepId === "packages") {
+    return `
+      <div class="setup-block">
+        <h3>Startpakker</h3>
+        <div class="setup-options">
+          ${STARTER_PACKAGES.map((pack) => `
+            <label class="setup-option">
+              <input type="checkbox" name="starterPackage" value="${pack.id}" ${draft.starterPackages.includes(pack.id) ? "checked" : ""}>
+              <span>
+                <strong>${pack.title}</strong>
+                <small>${pack.description}</small>
+              </span>
+            </label>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+  if (stepId === "pin") {
+    return `
+      <div class="setup-block">
+        <h3>Voksen-PIN</h3>
+        <p class="muted">PIN-koden brukes på felles iPad eller barneenheter når noen skal inn i voksenpanelet.</p>
+        <div class="form-grid">
+          <div class="field">
+            <label>Ny voksen-PIN</label>
+            <input name="pin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" value="${escapeAttr(draft.pin)}" required>
+          </div>
+          <div class="field">
+            <label>Gjenta PIN</label>
+            <input name="repeatPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" value="${escapeAttr(draft.repeatPin)}" required>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="setup-block">
+      <h3>Klar til å starte</h3>
+      <div class="setup-summary">
+        <div><strong>Familie</strong><span>${escapeText(draft.familyName || "Ikke satt")}</span></div>
+        <div><strong>Barn</strong><span>${draft.childNames.filter(Boolean).map(escapeText).join(", ") || "Ingen"}</span></div>
+        <div><strong>Startpakker</strong><span>${draft.starterPackages.map((id) => STARTER_PACKAGES.find((pack) => pack.id === id)?.title).filter(Boolean).join(", ") || "Ingen"}</span></div>
+        <div><strong>Google-eier</strong><span>${escapeText(googleOwnerLabel())}</span></div>
+      </div>
+      <p class="muted">Etter oppstart kan du endre alt fra voksenpanelet under Innstillinger.</p>
+    </div>
   `;
 }
 
@@ -2166,12 +2265,75 @@ function saveReward(form) {
   render();
 }
 
-async function completeFirstSetup(form) {
+function collectSetupDraft() {
+  ensureSetupDraft();
+  const form = app.querySelector('[data-form="first-setup"]');
+  if (!form) return view.setupDraft;
   const data = new FormData(form);
-  const familyName = String(data.get("familyName") || "").trim();
-  const pin = String(data.get("pin") || "");
-  const repeatPin = String(data.get("repeatPin") || "");
-  const childNames = data.getAll("childName").map((name) => String(name).trim()).filter(Boolean);
+  if (data.has("familyName")) view.setupDraft.familyName = String(data.get("familyName") || "").trim();
+  if (data.has("childCount")) view.setupDraft.childCount = Number(data.get("childCount")) || 1;
+  const childNames = data.getAll("childName").map((name) => String(name).trim());
+  if (childNames.length) {
+    view.setupDraft.childNames = [...childNames, ...view.setupDraft.childNames.slice(childNames.length)].slice(0, 5);
+  }
+  if (app.querySelector('[name="starterPackage"]')) {
+    view.setupDraft.starterPackages = data.getAll("starterPackage");
+  }
+  if (data.has("pin")) view.setupDraft.pin = String(data.get("pin") || "");
+  if (data.has("repeatPin")) view.setupDraft.repeatPin = String(data.get("repeatPin") || "");
+  return view.setupDraft;
+}
+
+function validateSetupStep(stepId) {
+  const draft = collectSetupDraft();
+  if (stepId === "google" && !familyHasGoogleOwner()) {
+    showToast("Logg inn med Google før du går videre.");
+    return false;
+  }
+  if (stepId === "family" && !draft.familyName) {
+    showToast("Familien må ha et navn.");
+    return false;
+  }
+  if (stepId === "children") {
+    const requiredNames = draft.childNames.slice(0, Number(draft.childCount) || 1).filter(Boolean);
+    if (!requiredNames.length || requiredNames.length < Number(draft.childCount)) {
+      showToast("Legg inn navn på alle barna.");
+      return false;
+    }
+  }
+  if (stepId === "pin") {
+    if (draft.pin.length < 4) {
+      showToast("PIN må ha minst 4 tegn.");
+      return false;
+    }
+    if (draft.pin !== draft.repeatPin) {
+      showToast("PIN-kodene er ikke like.");
+      return false;
+    }
+  }
+  return true;
+}
+
+function setupNext() {
+  const steps = setupSteps();
+  const current = steps[view.setupStep || 0];
+  if (!validateSetupStep(current.id)) return;
+  view.setupStep = Math.min((view.setupStep || 0) + 1, steps.length - 1);
+  render();
+}
+
+function setupBack() {
+  collectSetupDraft();
+  view.setupStep = Math.max((view.setupStep || 0) - 1, 0);
+  render();
+}
+
+async function completeFirstSetup(form) {
+  const draft = collectSetupDraft();
+  const familyName = draft.familyName;
+  const pin = draft.pin;
+  const repeatPin = draft.repeatPin;
+  const childNames = draft.childNames.slice(0, Number(draft.childCount) || 1).map((name) => String(name).trim()).filter(Boolean);
 
   if (!familyName) return showToast("Familien må ha et navn.");
   if (!familyHasGoogleOwner()) return showToast("Logg inn med Google før du starter familien.");
@@ -2215,7 +2377,7 @@ async function completeFirstSetup(form) {
     updatedAt: now
   }, true);
 
-  data.getAll("starterPackage").forEach((packageId) => {
+  draft.starterPackages.forEach((packageId) => {
     addStarterPackage(packageId, activeChildIds());
   });
 
@@ -2224,6 +2386,8 @@ async function completeFirstSetup(form) {
   view.childTab = "tasks";
   view.adultTab = "overview";
   view.adultUnlocked = false;
+  view.setupStep = 0;
+  view.setupDraft = null;
   localStorage.setItem(DEVICE_PROFILE_KEY, "home");
   saveState();
   showToast("Familien er satt opp.");
@@ -2765,6 +2929,9 @@ function cloudPathLabel(familyId = cloudFamilyId()) {
 }
 
 function cloudFamilyId() {
+  if (!state.setupCompleted && !pendingFamilyCode()) {
+    return state.cloudFamilyId || state.familyId || "local-family";
+  }
   return state.cloudFamilyId || APP_CONFIG.cloudSync.pinnedFamilyId || state.familyId || "local-family";
 }
 
@@ -3311,6 +3478,12 @@ app.addEventListener("click", (event) => {
   if (action === "home") {
     goHome();
   }
+  if (action === "setup-next") {
+    setupNext();
+  }
+  if (action === "setup-back") {
+    setupBack();
+  }
   if (action === "cancel-connect") {
     clearPendingFamilyCode();
     render();
@@ -3691,7 +3864,7 @@ async function initFirebaseSync() {
       setCloudDocRef();
       await writeCloudState();
     } else {
-      if (!pendingFamilyCode()) await writeCloudState();
+      if (!pendingFamilyCode() && state.setupCompleted) await writeCloudState();
     }
 
     subscribeCloudState();
@@ -3787,6 +3960,9 @@ async function loadBestCloudState() {
 }
 
 function cloudFamilyCandidates() {
+  if (!state.setupCompleted && !pendingFamilyCode()) {
+    return [cloudFamilyId()];
+  }
   const ids = [
     cloudFamilyId(),
     state.cloudFamilyId,
