@@ -460,6 +460,10 @@ button:disabled {
   line-height: 0.98;
 }
 
+.setup-intro.adult-invite-intro h2 {
+  max-width: 100%;
+}
+
 .setup-intro p {
   max-width: 34rem;
   margin: 0;

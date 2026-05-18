@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "49";
+const APP_VERSION = "50";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -451,6 +451,7 @@ function renderLoading() {
 function renderDeviceConnect() {
   const code = pendingFamilyCode();
   const adultInviteCode = pendingAdultInviteCode();
+  const isAdultInvite = Boolean(adultInviteCode);
   const matchesFamily = normalizeFamilyCode(code) === normalizeFamilyCode(state.familyCode);
   const adultInvite = adultInviteCode ? findActiveInvite(adultInviteCode, "adult") : null;
   const lookupFailed = Boolean(cloud.familyCodeLookupError);
@@ -460,13 +461,13 @@ function renderDeviceConnect() {
         <div class="brand-mark">⭐</div>
         <div>
           <p class="eyebrow">Familieoppdrag</p>
-          <h1>Koble til enhet</h1>
+          <h1>${isAdultInvite ? "Koble til voksen" : "Koble til enhet"}</h1>
         </div>
       </div>
     </header>
     <section class="setup-shell">
-      <div class="setup-intro">
-        <h2>${matchesFamily ? adultInviteCode ? "Vokseninvitasjon" : "Velg startside" : "Fant ikke familien"}</h2>
+      <div class="setup-intro ${isAdultInvite ? "adult-invite-intro" : ""}">
+        <h2>${matchesFamily ? isAdultInvite ? "Voksen" : "Velg startside" : "Fant ikke familien"}</h2>
         <p>${matchesFamily ? adultInviteCode ? `${escapeText(state.familyName)} er funnet. Logg inn med Google for å bli lagt til som voksen.` : `${escapeText(state.familyName)} er klar på denne enheten. Velg hva appen skal åpne med.` : "Appen forsøkte å finne familien med familiekoden i Firestore."}</p>
       </div>
       <div class="panel setup-form">
@@ -476,7 +477,7 @@ function renderDeviceConnect() {
             <p class="muted">${adultInvite ? "Denne voksne får tilgang til voksenpanelet etter Google-innlogging." : "Be eier lage en ny vokseninvitasjon fra Familie og voksne."}</p>
             <div class="actions" style="margin-top:14px">
               <button class="btn" data-action="accept-adult-invite" ${adultInvite ? "" : "disabled"}>Logg inn med Google</button>
-              <button class="btn secondary" data-action="cancel-connect">Avbryt</button>
+              <button class="btn secondary" data-action="cancel-connect">Til appen</button>
             </div>
           </div>
         ` : matchesFamily ? `
@@ -495,9 +496,9 @@ function renderDeviceConnect() {
             <p class="muted">${lookupFailed ? `Kunne ikke finne familie med denne koden: ${escapeText(cloud.familyCodeLookupError)}` : "Koden ble ikke funnet i familie-registeret. Sjekk at koden er riktig, og at voksen har åpnet appen minst én gang etter siste oppdatering."}</p>
           </div>
         `}
-        <div class="actions">
+        ${matchesFamily && adultInviteCode ? "" : `<div class="actions">
           <button class="btn secondary" data-action="cancel-connect">Til appen</button>
-        </div>
+        </div>`}
       </div>
     </section>
   `;
