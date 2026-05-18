@@ -564,6 +564,52 @@ button:disabled {
   line-height: 1.35;
 }
 
+.auth-status-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.auth-status-card.ready {
+  border-color: rgba(0, 194, 168, 0.35);
+  background: rgba(0, 194, 168, 0.08);
+}
+
+.auth-status-card.pending {
+  border-color: rgba(255, 183, 3, 0.45);
+  background: rgba(255, 183, 3, 0.12);
+}
+
+.auth-status-card div,
+.adult-user {
+  display: grid;
+  gap: 4px;
+}
+
+.auth-status-card small,
+.adult-user small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.adult-user-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.adult-user {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .hero-main {
   position: relative;
   overflow: hidden;
@@ -1102,6 +1148,11 @@ th {
 
   .task-card .actions {
     grid-column: 1 / -1;
+  }
+
+  .auth-status-card {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .brand-mark,

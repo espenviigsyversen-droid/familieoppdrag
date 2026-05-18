@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "44";
+const APP_VERSION = "45";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -33,12 +33,17 @@ const cloud = {
   error: "",
   familyId: null,
   db: null,
+  auth: null,
+  authUser: null,
   doc: null,
   docRef: null,
   getDoc: null,
   setDoc: null,
   onSnapshot: null,
   serverTimestamp: null,
+  GoogleAuthProvider: null,
+  signInWithPopup: null,
+  signInWithRedirect: null,
   unsubscribe: null,
   saveTimer: null,
   pendingSave: false,
@@ -301,9 +306,13 @@ function normalizeAdultUsers(users) {
   return users.map((user) => ({
     uid: user.uid || null,
     email: user.email || "",
+    name: user.name || "",
+    photoURL: user.photoURL || "",
+    provider: user.provider || "google",
     role: user.role || "adult",
     status: user.status || "active",
-    addedAt: user.addedAt || new Date().toISOString()
+    addedAt: user.addedAt || new Date().toISOString(),
+    lastLoginAt: user.lastLoginAt || null
   }));
 }
 
@@ -488,6 +497,17 @@ function renderSetup() {
         <p>Legg inn familien, barna og en voksen-PIN. Etterpå kan alt justeres fra voksenpanelet.</p>
       </div>
       <form data-form="first-setup" class="panel setup-form">
+        <div class="setup-block auth-setup">
+          <h3>Voksen med Google</h3>
+          <p class="muted">Minst én voksen må logge inn med Google før familien kan deles til andre enheter.</p>
+          <div class="auth-status-card ${familyHasGoogleOwner() ? "ready" : "pending"}">
+            <div>
+              <strong>${familyHasGoogleOwner() ? "Google-eier er klar" : "Google-eier mangler"}</strong>
+              <small>${googleOwnerLabel()}</small>
+            </div>
+            <button class="btn secondary" type="button" data-action="google-owner-login">${familyHasGoogleOwner() ? "Bytt Google-konto" : "Logg inn med Google"}</button>
+          </div>
+        </div>
         <div class="form-grid">
           ${field("familyName", "Familienavn", state.familyName === "Familien" ? "" : state.familyName, "text")}
           <div class="field">
@@ -1443,7 +1463,7 @@ function settingsBackButton() {
 
 function settingsMenu() {
   const items = [
-    ["family", "Familie", "Navn, familie-id og datamodell"],
+    ["family", "Familie og voksne", "Navn, Google-eier og datamodell"],
     ["devices", "Enheter og kobling", "Koblingslenke, familiekode og standardprofiler"],
     ["security", "PIN og sikkerhet", "Endre voksen-PIN"],
     ["backup", "Backup og flytting", "Eksporter, importer og flytt data"],
@@ -1476,6 +1496,7 @@ function settingsMenu() {
 }
 
 function settingsFamily() {
+  const adults = activeAdultUsers();
   return `
     <section class="panel">
       <div class="section-title compact-title">
@@ -1499,6 +1520,24 @@ function settingsFamily() {
           <button class="btn" type="submit">Lagre familie</button>
         </div>
       </form>
+      <div class="setup-block">
+        <h3>Google-eier og voksne</h3>
+        <div class="auth-status-card ${familyHasGoogleOwner() ? "ready" : "pending"}">
+          <div>
+            <strong>${familyHasGoogleOwner() ? "Familien har Google-eier" : "Legg til Google-eier før deling"}</strong>
+            <small>${googleOwnerLabel()}</small>
+          </div>
+          <button class="btn secondary" type="button" data-action="google-owner-login">${familyHasGoogleOwner() ? "Logg inn / bytt konto" : "Logg inn med Google"}</button>
+        </div>
+        <div class="adult-user-list">
+          ${adults.length ? adults.map((user) => `
+            <div class="adult-user">
+              <span>${escapeText(user.name || user.email || "Google-bruker")}</span>
+              <small>${escapeText(user.email || "")} · ${user.role === "owner" ? "Eier" : "Voksen"}</small>
+            </div>
+          `).join("") : `<p class="small">Ingen voksne er lagt til ennå.</p>`}
+        </div>
+      </div>
       <p class="small">Datamodell: versjon ${state.schemaVersion || SCHEMA_VERSION}. Voksne: ${state.adultUsers?.length || 0}. Enheter: ${state.familyDevices?.length || 0}. Invitasjoner: ${state.inviteCodes?.length || 0}.</p>
     </section>
   `;
@@ -2088,19 +2127,22 @@ async function completeFirstSetup(form) {
   const childNames = data.getAll("childName").map((name) => String(name).trim()).filter(Boolean);
 
   if (!familyName) return showToast("Familien må ha et navn.");
+  if (!familyHasGoogleOwner()) return showToast("Logg inn med Google før du starter familien.");
   if (pin.length < 4) return showToast("PIN må ha minst 4 tegn.");
   if (pin !== repeatPin) return showToast("PIN-kodene er ikke like.");
   if (!childNames.length) return showToast("Legg inn minst ett barn.");
 
   const now = new Date().toISOString();
+  const ownerUid = state.ownerUid;
+  const adultUsers = activeAdultUsers();
   state = normalizeLocalState({
     familyId: uniqueFamilyId(familyName),
     familyName,
     familyCode: createFamilyCode(),
     schemaVersion: SCHEMA_VERSION,
     setupCompleted: true,
-    ownerUid: null,
-    adultUsers: [],
+    ownerUid,
+    adultUsers,
     familyDevices: [],
     inviteCodes: [],
     parentPinHash: await hashPin(pin),
@@ -2688,6 +2730,96 @@ function firebaseProjectLabel() {
   return APP_CONFIG.cloudSync.firebase?.projectId || "Ikke satt";
 }
 
+function activeAdultUsers() {
+  return (state.adultUsers || []).filter((user) => user.status !== "removed");
+}
+
+function familyOwner() {
+  return activeAdultUsers().find((user) => user.role === "owner") || null;
+}
+
+function familyHasGoogleOwner() {
+  return Boolean(state.ownerUid && familyOwner());
+}
+
+function googleOwnerLabel() {
+  const owner = familyOwner();
+  if (owner) return owner.email || owner.name || "Google-konto er koblet";
+  if (cloud.authUser && !cloud.authUser.isAnonymous) return `${cloud.authUser.email || cloud.authUser.name || "Google-konto"} er innlogget`;
+  return "Logg inn med Google for å gjøre en voksen til eier.";
+}
+
+function normalizeAuthUser(user) {
+  if (!user) return null;
+  return {
+    uid: user.uid,
+    email: user.email || "",
+    name: user.displayName || "",
+    photoURL: user.photoURL || "",
+    isAnonymous: Boolean(user.isAnonymous)
+  };
+}
+
+function registerGoogleAdult(user, role = "owner") {
+  if (!user || user.isAnonymous) return false;
+  const now = new Date().toISOString();
+  state.ownerUid = state.ownerUid || user.uid;
+  if (!Array.isArray(state.adultUsers)) state.adultUsers = [];
+  const existing = state.adultUsers.find((adult) => adult.uid === user.uid);
+  const adultRole = role === "owner" || !familyOwner() ? "owner" : "adult";
+  if (existing) {
+    existing.email = user.email || existing.email || "";
+    existing.name = user.displayName || existing.name || "";
+    existing.photoURL = user.photoURL || existing.photoURL || "";
+    existing.provider = "google";
+    existing.status = "active";
+    existing.role = existing.role || adultRole;
+    existing.lastLoginAt = now;
+  } else {
+    state.adultUsers.push({
+      uid: user.uid,
+      email: user.email || "",
+      name: user.displayName || "",
+      photoURL: user.photoURL || "",
+      provider: "google",
+      role: adultRole,
+      status: "active",
+      addedAt: now,
+      lastLoginAt: now
+    });
+  }
+  if (adultRole === "owner") state.ownerUid = user.uid;
+  return true;
+}
+
+async function signInGoogleOwner() {
+  if (!cloud.auth || !cloud.GoogleAuthProvider || !cloud.signInWithPopup) {
+    showToast("Google-innlogging er ikke klar ennå.");
+    return;
+  }
+  try {
+    const provider = new cloud.GoogleAuthProvider();
+    provider.setCustomParameters?.({ prompt: "select_account" });
+    const result = await cloud.signInWithPopup(cloud.auth, provider);
+    cloud.authUser = normalizeAuthUser(result.user);
+    registerGoogleAdult(result.user, "owner");
+    saveState();
+    showToast("Google-eier er koblet til familien.");
+    render();
+  } catch (error) {
+    const code = error?.code || "";
+    const shouldTryRedirect = code.includes("popup-blocked") || code.includes("operation-not-supported") || code.includes("web-storage");
+    if (cloud.signInWithRedirect && shouldTryRedirect) {
+      const provider = new cloud.GoogleAuthProvider();
+      await cloud.signInWithRedirect(cloud.auth, provider);
+      return;
+    }
+    cloud.error = error?.message || "Kunne ikke logge inn med Google";
+    showToast("Google-innlogging feilet.");
+    render();
+  }
+}
+
 function syncDiagnosisText() {
   return [
     `App: ${APP_CONFIG.appName}`,
@@ -2704,6 +2836,8 @@ function syncDiagnosisText() {
     `Siste synk-test: ${state.syncDiagnostics?.lastTestAt ? formatDate(state.syncDiagnostics.lastTestAt) : "ingen"}`,
     `Synk-test enhet: ${state.syncDiagnostics?.lastTestDevice || "-"}`,
     `Sky-feil: ${cloud.error || "ingen"}`,
+    `Google-bruker: ${cloud.authUser?.isAnonymous ? "anonym" : cloud.authUser?.email || "ikke innlogget"}`,
+    `Google-eier: ${googleOwnerLabel()}`,
     `Familie-id: ${state.familyId || "-"}`,
     `Familiekode: ${state.familyCode || "-"}`,
     `Datamodell: ${state.schemaVersion || SCHEMA_VERSION}`,
@@ -3037,6 +3171,9 @@ app.addEventListener("click", (event) => {
   if (action === "refresh-app") {
     refreshApp();
   }
+  if (action === "google-owner-login") {
+    signInGoogleOwner();
+  }
   if (action === "force-cloud-save") {
     cloud.pendingSave = true;
     flushCloudSave();
@@ -3211,7 +3348,7 @@ async function initFirebaseSync() {
   try {
     view.bootMessage = "Kobler til Firestore";
     render();
-    const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged }, { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp }] = await Promise.all([
+    const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult }, { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp }] = await Promise.all([
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js"),
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js"),
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js")
@@ -3221,6 +3358,10 @@ async function initFirebaseSync() {
     const auth = getAuth(firebaseApp);
     const db = getFirestore(firebaseApp);
     cloud.db = db;
+    cloud.auth = auth;
+    cloud.GoogleAuthProvider = GoogleAuthProvider;
+    cloud.signInWithPopup = signInWithPopup;
+    cloud.signInWithRedirect = signInWithRedirect;
     cloud.doc = doc;
     cloud.getDoc = getDoc;
     cloud.setDoc = setDoc;
@@ -3228,15 +3369,32 @@ async function initFirebaseSync() {
     cloud.serverTimestamp = serverTimestamp;
     setCloudDocRef();
 
+    await getRedirectResult(auth).then((result) => {
+      if (result?.user && !result.user.isAnonymous) {
+        cloud.authUser = normalizeAuthUser(result.user);
+        registerGoogleAdult(result.user, "owner");
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+    }).catch((error) => {
+      console.warn("Google redirect result unavailable:", error);
+    });
+
     await new Promise((resolve, reject) => {
+      let anonymousStarted = false;
       const stop = onAuthStateChanged(auth, (user) => {
         if (user) {
+          cloud.authUser = normalizeAuthUser(user);
           stop();
           resolve(user);
+        } else if (!anonymousStarted) {
+          anonymousStarted = true;
+          signInAnonymously(auth).catch(reject);
         }
       }, reject);
-      signInAnonymously(auth).catch(reject);
     });
+    if (auth.currentUser && !auth.currentUser.isAnonymous && registerGoogleAdult(auth.currentUser, "owner")) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
 
     view.bootMessage = "Henter familiedata";
     render();
@@ -3360,6 +3518,8 @@ function normalizeRemoteState(remoteState) {
     ...remoteState,
     familyCode: remoteState.familyCode || familyCodeFromSeed(`${remoteState.familyId || "local-family"}-${remoteState.createdAt || "remote"}`),
     setupCompleted: remoteState.setupCompleted ?? true,
+    ownerUid: remoteState.ownerUid || state.ownerUid || null,
+    adultUsers: normalizeAdultUsers((remoteState.adultUsers?.length ? remoteState.adultUsers : state.adultUsers) || []),
     children: normalizeChildren(remoteState.children || []),
     tasks: normalizeTasks(remoteState.tasks || []),
     completions: remoteState.completions || [],
