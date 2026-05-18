@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "29";
+const APP_VERSION = "30";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -198,6 +198,7 @@ function loadState() {
   return normalizeLocalState({
     familyId: "local-family",
     familyName: "",
+    familyCode: createFamilyCode(),
     setupCompleted: false,
     parentPinHash: PIN_HASH,
     children: [],
@@ -218,6 +219,7 @@ function normalizeLocalState(savedState = {}, existingInstall = true) {
   return {
     familyId: savedState.familyId || "local-family",
     familyName: savedState.familyName || "Familien",
+    familyCode: savedState.familyCode || familyCodeFromSeed(`${savedState.familyId || "local-family"}-${savedState.createdAt || "start"}`),
     setupCompleted: savedState.setupCompleted ?? (existingInstall && hasConfiguredData),
     parentPinHash: savedState.parentPinHash || PIN_HASH,
     children: normalizeChildren(savedState.children || childrenSeed),
@@ -272,7 +274,9 @@ function saveState() {
 }
 
 function render() {
-  if (!state.setupCompleted) {
+  if (pendingFamilyCode() && state.setupCompleted) {
+    renderDeviceConnect();
+  } else if (!state.setupCompleted) {
     renderSetup();
   } else if (view.gate) {
     renderPinGate();
@@ -283,6 +287,49 @@ function render() {
   } else {
     renderHome();
   }
+}
+
+function renderDeviceConnect() {
+  const code = pendingFamilyCode();
+  const matchesFamily = normalizeFamilyCode(code) === normalizeFamilyCode(state.familyCode);
+  app.innerHTML = `
+    <header class="topbar setup-topbar">
+      <div class="brand">
+        <div class="brand-mark">⭐</div>
+        <div>
+          <p class="eyebrow">Familieoppdrag</p>
+          <h1>Koble til enhet</h1>
+        </div>
+      </div>
+    </header>
+    <section class="setup-shell">
+      <div class="setup-intro">
+        <h2>${matchesFamily ? "Velg startside" : "Fant ikke familien"}</h2>
+        <p>${matchesFamily ? `${escapeText(state.familyName)} er klar på denne enheten. Velg hva appen skal åpne med.` : "Denne versjonen kan bare koble til en familie som allerede er lastet inn på enheten. Når flerfamilie-synk er på plass, kan denne lenken hente riktig familie automatisk."}</p>
+      </div>
+      <div class="panel setup-form">
+        ${matchesFamily ? `
+          <div class="setup-block">
+            <h3>${escapeText(state.familyName)}</h3>
+            <p class="muted">Du kan endre standardprofil senere fra hjemskjermen eller barnets profil.</p>
+            <div class="connect-options">
+              <button class="btn secondary" data-action="connect-device" data-profile="home">Profilvalg på felles enhet</button>
+              <button class="btn secondary" data-action="connect-device" data-profile="adult">Voksenoversikt</button>
+              ${activeChildren().map((child) => `<button class="btn secondary" data-action="connect-device" data-profile="child:${child.id}">${child.avatar} ${child.name}</button>`).join("")}
+            </div>
+          </div>
+        ` : `
+          <div class="setup-block">
+            <h3>Kode: ${escapeText(code || "")}</h3>
+            <p class="muted">Foreløpig må familien finnes på enheten før koden kan brukes. Dette er forberedelsen til ekte invitasjonslenker med sentral hosting.</p>
+          </div>
+        `}
+        <div class="actions">
+          <button class="btn secondary" data-action="cancel-connect">Til appen</button>
+        </div>
+      </div>
+    </section>
+  `;
 }
 
 function renderSetup() {
@@ -1226,10 +1273,19 @@ function adultSettings() {
           <label>Intern familie-id</label>
           <input name="familyId" type="text" value="${escapeAttr(state.familyId || "local-family")}" required>
         </div>
+        <div class="field">
+          <label>Familiekode</label>
+          <input name="familyCode" type="text" value="${escapeAttr(state.familyCode || "")}" readonly>
+        </div>
         <div class="actions" style="align-self:end">
           <button class="btn" type="submit">Lagre familie</button>
         </div>
       </form>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn secondary" data-action="copy-family-link">Kopier koblingslenke</button>
+        <button class="btn secondary" data-action="new-family-code">Lag ny kode</button>
+      </div>
+      <p class="small">Koblingslenken brukes for å velge standardprofil på en ny eller felles enhet. Senere kan samme flyt kobles til ekte invitasjon via Firebase.</p>
     </section>
     <section class="panel">
       <h2>Innstillinger</h2>
@@ -1680,6 +1736,7 @@ async function completeFirstSetup(form) {
   state = normalizeLocalState({
     familyId: uniqueFamilyId(familyName),
     familyName,
+    familyCode: createFamilyCode(),
     setupCompleted: true,
     parentPinHash: await hashPin(pin),
     children: childNames.map((name, index) => ({
@@ -1726,6 +1783,7 @@ function saveFamilySettings(form) {
   if (!familyName) return showToast("Familien må ha et navn.");
   state.familyName = familyName;
   state.familyId = familyId;
+  state.familyCode = state.familyCode || createFamilyCode();
   state.setupCompleted = true;
   saveState();
   showToast("Familieinnstillinger er lagret.");
@@ -1803,6 +1861,24 @@ function uniqueChildIdForList(name, previousNames) {
 
 function uniqueFamilyId(name) {
   return `family-${slugify(name) || crypto.randomUUID().slice(0, 8)}`;
+}
+
+function createFamilyCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+}
+
+function familyCodeFromSeed(seed) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let hash = 0;
+  String(seed).split("").forEach((char) => {
+    hash = ((hash << 5) - hash + char.charCodeAt(0)) >>> 0;
+  });
+  return Array.from({ length: 8 }, (_, index) => alphabet[(hash + index * 17) % alphabet.length]).join("");
+}
+
+function normalizeFamilyCode(code) {
+  return String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 function applyStarterPackage(packageId) {
@@ -2171,6 +2247,57 @@ function setDeviceProfile(profile) {
   showToast("Standardprofil er lagret for denne enheten.");
 }
 
+function pendingFamilyCode() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("familiekode") || params.get("join") || "";
+}
+
+function clearPendingFamilyCode() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("familiekode");
+  url.searchParams.delete("join");
+  window.history.replaceState({}, "", url);
+}
+
+function familyLink() {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("familiekode", state.familyCode || "");
+  return url.toString();
+}
+
+async function copyFamilyLink() {
+  const link = familyLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("Koblingslenke kopiert.");
+  } catch {
+    prompt("Kopier koblingslenken:", link);
+  }
+}
+
+function connectDevice(profile) {
+  if (!profile) return;
+  if (profile.startsWith("child:")) {
+    const childId = profile.replace("child:", "");
+    if (!getChild(childId)?.active) return showToast("Barnet er ikke aktivt.");
+  }
+  setDeviceProfile(profile);
+  clearPendingFamilyCode();
+  if (profile === "adult") {
+    view.mode = "adult";
+    view.childId = null;
+  } else if (profile.startsWith("child:")) {
+    view.mode = "child";
+    view.childId = profile.replace("child:", "");
+  } else {
+    view.mode = "home";
+    view.childId = null;
+  }
+  render();
+}
+
 function requiresPinForHome() {
   const profile = localStorage.getItem(DEVICE_PROFILE_KEY);
   return view.mode === "child" && profile === `child:${view.childId}` && !view.adultUnlocked;
@@ -2287,6 +2414,13 @@ app.addEventListener("click", (event) => {
   if (action === "home") {
     goHome();
   }
+  if (action === "cancel-connect") {
+    clearPendingFamilyCode();
+    render();
+  }
+  if (action === "connect-device") {
+    connectDevice(button.dataset.profile);
+  }
   if (action === "cancel-gate") {
     view.gate = null;
     render();
@@ -2391,6 +2525,15 @@ app.addEventListener("click", (event) => {
   }
   if (action === "refresh-app") {
     refreshApp();
+  }
+  if (action === "copy-family-link") {
+    copyFamilyLink();
+  }
+  if (action === "new-family-code" && confirm("Vil du lage en ny familiekode? Gamle koblingslenker vil slutte å passe.")) {
+    state.familyCode = createFamilyCode();
+    saveState();
+    showToast("Ny familiekode er laget.");
+    render();
   }
   if (action === "reset-levels" && confirm("Vil du tilbakestille nivåene til standardoppsettet?")) {
     state.levels = DEFAULT_LEVELS;
@@ -2597,6 +2740,8 @@ function normalizeRemoteState(remoteState) {
   return {
     ...loadState(),
     ...remoteState,
+    familyCode: remoteState.familyCode || familyCodeFromSeed(`${remoteState.familyId || "local-family"}-${remoteState.createdAt || "remote"}`),
+    setupCompleted: remoteState.setupCompleted ?? true,
     children: normalizeChildren(remoteState.children || []),
     tasks: normalizeTasks(remoteState.tasks || []),
     completions: remoteState.completions || [],

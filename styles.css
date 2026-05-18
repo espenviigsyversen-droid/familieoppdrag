@@ -416,6 +416,16 @@ button:disabled {
   gap: 10px;
 }
 
+.connect-options {
+  display: grid;
+  gap: 10px;
+}
+
+.connect-options .btn {
+  justify-content: flex-start;
+  box-shadow: none;
+}
+
 .setup-option {
   display: grid;
   grid-template-columns: auto 1fr;

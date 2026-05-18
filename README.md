@@ -26,6 +26,16 @@ I voksenmodus finnes det startpakker under `Innstillinger`. Disse kan legge inn 
 
 Familienavn og intern familie-id kan endres under `Innstillinger`. Dette er forberedelse til en senere flerfamilie-versjon med sentral hosting, innlogging og invitasjonslenker.
 
+## Familiekode og enhetskobling
+
+I voksenmodus kan familien kopiere en koblingslenke fra `Innstillinger`. Lenken inneholder en familiekode og brukes til å velge standardprofil på en enhet:
+
+- `Profilvalg` for felles iPad/tablet
+- `Voksenoversikt` for foreldre
+- direkte barneprofil for et barns egen enhet
+
+I denne lokale versjonen må familien allerede være lastet inn på enheten for at koblingslenken skal passe. Når appen senere flyttes til sentral hosting med innlogging og Firestore per familie, kan samme flyt brukes til ekte invitasjonslenker.
+
 ## Viktig om Firebase
 
 Ikke del en versjon der flere familier bruker samme `FAMILY_ID` i samme Firebase-prosjekt. Da vil familiene kunne skrive til samme appdata. Hver familie bør ha sitt eget Firebase-prosjekt, eller minst sin egen unike `FAMILY_ID`.
