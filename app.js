@@ -1,25 +1,38 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "30";
-const FIREBASE_ENABLED = true;
-const FAMILY_ID = "familieoppdrag";
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAMPfQ9gX9rbuvcPsVjYVtq5IT_orjDBPs",
-  authDomain: "home-tasks-app-18de3.firebaseapp.com",
-  projectId: "home-tasks-app-18de3",
-  storageBucket: "home-tasks-app-18de3.firebasestorage.app",
-  messagingSenderId: "253720858709",
-  appId: "1:253720858709:web:62bd1844be04ee76c384dc"
+const APP_VERSION = "31";
+const APP_CONFIG = {
+  appName: "Familieoppdrag",
+  cloudSync: {
+    enabled: true,
+    provider: "firebase",
+    stateCollection: "families",
+    stateSubcollection: "appState",
+    stateDocument: "current",
+    firebase: {
+      apiKey: "AIzaSyAMPfQ9gX9rbuvcPsVjYVtq5IT_orjDBPs",
+      authDomain: "home-tasks-app-18de3.firebaseapp.com",
+      projectId: "home-tasks-app-18de3",
+      storageBucket: "home-tasks-app-18de3.firebasestorage.app",
+      messagingSenderId: "253720858709",
+      appId: "1:253720858709:web:62bd1844be04ee76c384dc"
+    }
+  }
 };
 
 const cloud = {
-  enabled: FIREBASE_ENABLED,
+  enabled: APP_CONFIG.cloudSync.enabled,
   ready: false,
   status: "Kobler til Firestore ...",
   error: "",
+  familyId: null,
+  db: null,
+  doc: null,
   docRef: null,
+  getDoc: null,
   setDoc: null,
+  onSnapshot: null,
   serverTimestamp: null,
   unsubscribe: null,
   saveTimer: null,
@@ -270,6 +283,7 @@ function normalizeRewards(rewards) {
 function saveState() {
   state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  ensureCloudFamilyPath();
   queueCloudSave();
 }
 
@@ -1286,6 +1300,7 @@ function adultSettings() {
         <button class="btn secondary" data-action="new-family-code">Lag ny kode</button>
       </div>
       <p class="small">Koblingslenken brukes for å velge standardprofil på en ny eller felles enhet. Senere kan samme flyt kobles til ekte invitasjon via Firebase.</p>
+      <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
     </section>
     <section class="panel">
       <h2>Innstillinger</h2>
@@ -1781,12 +1796,17 @@ function saveFamilySettings(form) {
   const familyName = String(data.get("familyName") || "").trim();
   const familyId = slugify(data.get("familyId") || "") || "local-family";
   if (!familyName) return showToast("Familien må ha et navn.");
+  const previousFamilyId = state.familyId;
   state.familyName = familyName;
   state.familyId = familyId;
   state.familyCode = state.familyCode || createFamilyCode();
   state.setupCompleted = true;
   saveState();
-  showToast("Familieinnstillinger er lagret.");
+  if (previousFamilyId !== familyId) {
+    showToast("Familie-id er lagret. Sky-stien er oppdatert.");
+  } else {
+    showToast("Familieinnstillinger er lagret.");
+  }
   render();
 }
 
@@ -2237,9 +2257,14 @@ function deviceProfileLabel() {
 
 function cloudStatusLabel() {
   if (!cloud.enabled) return "Lokal lagring";
-  if (cloud.ready) return "Synker med Firestore";
+  if (cloud.ready) return `Synker med ${state.familyId || "familie"}`;
   if (cloud.error) return "Lokal fallback";
   return cloud.status;
+}
+
+function cloudPathLabel() {
+  const config = APP_CONFIG.cloudSync;
+  return `${config.stateCollection}/${state.familyId || "local-family"}/${config.stateSubcollection}/${config.stateDocument}`;
 }
 
 function setDeviceProfile(profile) {
@@ -2685,12 +2710,16 @@ async function initFirebaseSync() {
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js")
     ]);
 
-    const firebaseApp = initializeApp(FIREBASE_CONFIG);
+    const firebaseApp = initializeApp(APP_CONFIG.cloudSync.firebase);
     const auth = getAuth(firebaseApp);
     const db = getFirestore(firebaseApp);
-    cloud.docRef = doc(db, "families", FAMILY_ID, "appState", "current");
+    cloud.db = db;
+    cloud.doc = doc;
+    cloud.getDoc = getDoc;
     cloud.setDoc = setDoc;
+    cloud.onSnapshot = onSnapshot;
     cloud.serverTimestamp = serverTimestamp;
+    setCloudDocRef();
 
     await new Promise((resolve, reject) => {
       const stop = onAuthStateChanged(auth, (user) => {
@@ -2702,7 +2731,7 @@ async function initFirebaseSync() {
       signInAnonymously(auth).catch(reject);
     });
 
-    const snapshot = await getDoc(cloud.docRef);
+    const snapshot = await cloud.getDoc(cloud.docRef);
     if (snapshot.exists() && snapshot.data().state) {
       cloud.applyingRemote = true;
       state = normalizeRemoteState(snapshot.data().state);
@@ -2712,20 +2741,10 @@ async function initFirebaseSync() {
       await writeCloudState();
     }
 
-    cloud.unsubscribe = onSnapshot(cloud.docRef, (remote) => {
-      if (!remote.exists() || !remote.data().state || cloud.applyingRemote) return;
-      const remoteState = normalizeRemoteState(remote.data().state);
-      if (remoteState.updatedAt && remoteState.updatedAt !== state.updatedAt) {
-        cloud.applyingRemote = true;
-        state = remoteState;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        cloud.applyingRemote = false;
-        render();
-      }
-    });
+    subscribeCloudState();
 
     cloud.ready = true;
-    cloud.status = "Synker med Firestore";
+    cloud.status = `Synker med ${state.familyId}`;
     cloud.error = "";
     render();
   } catch (error) {
@@ -2734,6 +2753,49 @@ async function initFirebaseSync() {
     console.warn("Firestore sync unavailable:", error);
     render();
   }
+}
+
+function setCloudDocRef() {
+  if (!cloud.doc) return;
+  const config = APP_CONFIG.cloudSync;
+  cloud.familyId = state.familyId || "local-family";
+  cloud.docRef = cloud.doc(
+    cloud.db,
+    config.stateCollection,
+    cloud.familyId,
+    config.stateSubcollection,
+    config.stateDocument
+  );
+}
+
+function subscribeCloudState() {
+  if (!cloud.onSnapshot || !cloud.docRef) return;
+  if (cloud.unsubscribe) cloud.unsubscribe();
+  cloud.unsubscribe = cloud.onSnapshot(cloud.docRef, (remote) => {
+    if (!remote.exists() || !remote.data().state || cloud.applyingRemote) return;
+    const remoteState = normalizeRemoteState(remote.data().state);
+    if (remoteState.updatedAt && remoteState.updatedAt !== state.updatedAt) {
+      cloud.applyingRemote = true;
+      state = remoteState;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      cloud.applyingRemote = false;
+      ensureCloudFamilyPath();
+      render();
+    }
+  });
+}
+
+function ensureCloudFamilyPath() {
+  if (!cloud.enabled || !cloud.ready || !cloud.doc || !cloud.db) return;
+  const currentFamilyId = state.familyId || "local-family";
+  if (cloud.familyId === currentFamilyId) return;
+  setCloudDocRef();
+  subscribeCloudState();
+  writeCloudState().catch((error) => {
+    cloud.error = error?.message || "Kunne ikke lagre i Firestore";
+    console.warn("Firestore family switch failed:", error);
+    render();
+  });
 }
 
 function normalizeRemoteState(remoteState) {
@@ -2769,7 +2831,8 @@ function queueCloudSave() {
 async function writeCloudState() {
   if (!cloud.docRef || !cloud.setDoc) return;
   await cloud.setDoc(cloud.docRef, {
-    familyId: FAMILY_ID,
+    familyId: state.familyId || "local-family",
+    familyName: state.familyName || "",
     state,
     updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
   }, { merge: true });

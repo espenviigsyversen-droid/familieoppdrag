@@ -7,9 +7,7 @@ En enkel familieapp for oppgaver, stjerner og belønninger. Appen kan kjøres so
 1. Opprett et eget Firebase-prosjekt.
 2. Aktiver Firestore Database.
 3. Aktiver anonym innlogging i Firebase Authentication.
-4. Bytt Firebase-verdiene øverst i `app.js`:
-   - `FIREBASE_CONFIG`
-   - `FAMILY_ID`
+4. Bytt Firebase-verdiene øverst i `app.js`, inne i `APP_CONFIG.cloudSync.firebase`.
 5. Last opp filene til GitHub eller en annen statisk host.
 6. Åpne appen, gå til voksenmodus og endre:
    - PIN-kode
@@ -26,6 +24,12 @@ I voksenmodus finnes det startpakker under `Innstillinger`. Disse kan legge inn 
 
 Familienavn og intern familie-id kan endres under `Innstillinger`. Dette er forberedelse til en senere flerfamilie-versjon med sentral hosting, innlogging og invitasjonslenker.
 
+Den interne familie-id-en brukes også i Firestore-stien:
+
+`families/{familyId}/appState/current`
+
+Det betyr at flere familier kan bruke samme Firebase-prosjekt uten å skrive til samme dokument, så lenge hver familie har unik familie-id og Firestore-reglene senere begrenser tilgangen riktig.
+
 ## Familiekode og enhetskobling
 
 I voksenmodus kan familien kopiere en koblingslenke fra `Innstillinger`. Lenken inneholder en familiekode og brukes til å velge standardprofil på en enhet:
@@ -38,4 +42,6 @@ I denne lokale versjonen må familien allerede være lastet inn på enheten for 
 
 ## Viktig om Firebase
 
-Ikke del en versjon der flere familier bruker samme `FAMILY_ID` i samme Firebase-prosjekt. Da vil familiene kunne skrive til samme appdata. Hver familie bør ha sitt eget Firebase-prosjekt, eller minst sin egen unike `FAMILY_ID`.
+Firebase-oppsettet ligger samlet i `APP_CONFIG` øverst i `app.js`. For å kjøre appen helt lokalt uten sky-synk kan `APP_CONFIG.cloudSync.enabled` settes til `false`.
+
+Ikke del en versjon der flere familier bruker samme familie-id i samme Firebase-prosjekt uten gode Firestore-regler. Da kan familiene skrive til samme dokument. I neste fase bør Firestore-regler og vokseninnlogging beskytte hver familie.
