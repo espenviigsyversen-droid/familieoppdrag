@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "43";
+const APP_VERSION = "44";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -43,6 +43,7 @@ const cloud = {
   saveTimer: null,
   pendingSave: false,
   lastSavedAt: null,
+  lastFetchedAt: null,
   applyingRemote: false
 };
 
@@ -238,6 +239,7 @@ function loadState() {
     redemptions: [],
     transactions: [],
     history: [],
+    syncDiagnostics: null,
     levels: DEFAULT_LEVELS,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -265,9 +267,19 @@ function normalizeLocalState(savedState = {}, existingInstall = true) {
     transactions: savedState.transactions || [],
     history: savedState.history || [],
     badges: savedState.badges || [],
+    syncDiagnostics: normalizeSyncDiagnostics(savedState.syncDiagnostics),
     levels: savedState.levels || DEFAULT_LEVELS,
     createdAt: savedState.createdAt || new Date().toISOString(),
     updatedAt: savedState.updatedAt || new Date().toISOString()
+  };
+}
+
+function normalizeSyncDiagnostics(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== "object") return null;
+  return {
+    lastTestAt: diagnostics.lastTestAt || null,
+    lastTestDevice: diagnostics.lastTestDevice || "",
+    appVersion: diagnostics.appVersion || ""
   };
 }
 
@@ -1644,12 +1656,15 @@ function settingsCloud() {
       <p class="small">Firebase-prosjekt: ${escapeText(firebaseProjectLabel())}</p>
       <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
       ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
+      ${cloud.lastFetchedAt ? `<p class="small">Sist hentet fra sky: ${formatDate(cloud.lastFetchedAt)}</p>` : ""}
+      ${state.syncDiagnostics?.lastTestAt ? `<p class="small">Siste synk-test: ${formatDate(state.syncDiagnostics.lastTestAt)} fra ${escapeText(state.syncDiagnostics.lastTestDevice || "ukjent enhet")}</p>` : ""}
       ${cloud.error ? `<p class="small">Sky-feil: ${escapeText(cloud.error)}</p>` : ""}
       <div class="diagnosis-box">
         <pre>${escapeText(diagnosis)}</pre>
       </div>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="force-cloud-save">Lagre til sky nå</button>
+        <button class="btn secondary" data-action="test-cloud-sync">Test sky-synk</button>
         <button class="btn secondary" data-action="copy-diagnosis">Kopier diagnose</button>
         <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
       </div>
@@ -2685,6 +2700,9 @@ function syncDiagnosisText() {
     `Sky-status: ${cloudStatusLabel()}`,
     `Sky-sti: ${cloudPathLabel()}`,
     `Sist lagret til sky: ${cloud.lastSavedAt ? formatDate(cloud.lastSavedAt) : "aldri i denne økten"}`,
+    `Sist hentet fra sky: ${cloud.lastFetchedAt ? formatDate(cloud.lastFetchedAt) : "aldri i denne økten"}`,
+    `Siste synk-test: ${state.syncDiagnostics?.lastTestAt ? formatDate(state.syncDiagnostics.lastTestAt) : "ingen"}`,
+    `Synk-test enhet: ${state.syncDiagnostics?.lastTestDevice || "-"}`,
     `Sky-feil: ${cloud.error || "ingen"}`,
     `Familie-id: ${state.familyId || "-"}`,
     `Familiekode: ${state.familyCode || "-"}`,
@@ -2704,6 +2722,18 @@ async function copyDiagnosis() {
   } catch {
     prompt("Kopier diagnose:", text);
   }
+}
+
+function runCloudSyncTest() {
+  state.syncDiagnostics = {
+    lastTestAt: new Date().toISOString(),
+    lastTestDevice: deviceProfileLabel(),
+    appVersion: APP_VERSION
+  };
+  saveState();
+  flushCloudSave();
+  showToast("Synk-test sendt til sky.");
+  render();
 }
 
 function setDeviceProfile(profile) {
@@ -3011,6 +3041,9 @@ app.addEventListener("click", (event) => {
     cloud.pendingSave = true;
     flushCloudSave();
   }
+  if (action === "test-cloud-sync") {
+    runCloudSyncTest();
+  }
   if (action === "copy-diagnosis") {
     copyDiagnosis();
   }
@@ -3209,6 +3242,7 @@ async function initFirebaseSync() {
     render();
     const remoteState = await loadBestCloudState();
     if (remoteState) {
+      cloud.lastFetchedAt = new Date().toISOString();
       cloud.applyingRemote = true;
       state = normalizeRemoteState(remoteState);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -3294,6 +3328,7 @@ function subscribeCloudState() {
   if (cloud.unsubscribe) cloud.unsubscribe();
   cloud.unsubscribe = cloud.onSnapshot(cloud.docRef, (remote) => {
     if (!remote.exists() || !remote.data().state || cloud.applyingRemote) return;
+    cloud.lastFetchedAt = new Date().toISOString();
     const remoteState = normalizeRemoteState(remote.data().state);
     if (remoteState.updatedAt && remoteState.updatedAt !== state.updatedAt) {
       cloud.applyingRemote = true;
@@ -3333,6 +3368,7 @@ function normalizeRemoteState(remoteState) {
     transactions: remoteState.transactions || [],
     history: remoteState.history || [],
     badges: remoteState.badges || [],
+    syncDiagnostics: normalizeSyncDiagnostics(remoteState.syncDiagnostics),
     levels: remoteState.levels || DEFAULT_LEVELS
   };
 }
