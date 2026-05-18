@@ -46,4 +46,27 @@ I denne lokale versjonen må familien allerede være lastet inn på enheten for 
 
 Firebase-oppsettet ligger samlet i `APP_CONFIG` øverst i `app.js`. For å kjøre appen helt lokalt uten sky-synk kan `APP_CONFIG.cloudSync.enabled` settes til `false`.
 
+`APP_CONFIG` viser også hvilket miljø appen kjører i:
+
+- `environment`
+- `environmentLabel`
+- `cloudSync.firebase.projectId`
+
+Disse vises i voksenpanelet under `Innstillinger`.
+
 Ikke del en versjon der flere familier bruker samme familie-id i samme Firebase-prosjekt uten gode Firestore-regler. Da kan familiene skrive til samme dokument. I neste fase bør Firestore-regler og vokseninnlogging beskytte hver familie.
+
+## Backup og flytting
+
+Voksenpanelet har `Eksporter data` og `Importer data` under `Innstillinger`.
+
+Anbefalt flytteflyt til nytt Firebase-prosjekt:
+
+1. Eksporter data fra dagens app.
+2. Lag nytt Firebase-prosjekt for Familieoppdrag.
+3. Bytt verdiene i `APP_CONFIG.cloudSync.firebase`.
+4. Last opp appen med ny config.
+5. Importer backupen i appen.
+6. Sjekk at barn, oppgaver, belønninger og historikk er riktig.
+
+Importer data erstatter dataene på enheten, så ta alltid eksport først.

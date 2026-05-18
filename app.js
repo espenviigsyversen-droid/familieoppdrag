@@ -1,10 +1,12 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "32";
+const APP_VERSION = "33";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
+  environment: "production",
+  environmentLabel: "Produksjon",
   cloudSync: {
     enabled: true,
     provider: "firebase",
@@ -1374,6 +1376,7 @@ function adultSettings() {
         <button class="btn secondary" data-action="new-family-code">Lag ny kode</button>
       </div>
       <p class="small">Koblingslenken brukes for å velge standardprofil på en ny eller felles enhet. Senere kan samme flyt kobles til ekte invitasjon via Firebase.</p>
+      <p class="small">Miljø: ${escapeText(environmentLabel())}. Firebase-prosjekt: ${escapeText(firebaseProjectLabel())}.</p>
       <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
       <p class="small">Datamodell: versjon ${state.schemaVersion || SCHEMA_VERSION}. Voksne: ${state.adultUsers?.length || 0}. Enheter: ${state.familyDevices?.length || 0}. Invitasjoner: ${state.inviteCodes?.length || 0}.</p>
     </section>
@@ -1403,8 +1406,10 @@ function adultSettings() {
       </form>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
+        <button class="btn secondary" data-action="choose-import">Importer data</button>
         <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
       </div>
+      <input class="visually-hidden" id="import-file" type="file" accept="application/json,.json" data-import-file>
     </section>
     <section class="panel">
       <h2>Startpakker</h2>
@@ -1890,6 +1895,54 @@ function saveFamilySettings(form) {
   render();
 }
 
+function exportState() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    appName: APP_CONFIG.appName,
+    appVersion: APP_VERSION,
+    environment: APP_CONFIG.environment,
+    firebaseProjectId: APP_CONFIG.cloudSync.firebase?.projectId || null,
+    state
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `familieoppdrag-${state.familyId || "backup"}-${dateKey()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importStateFile(file) {
+  if (!file) return;
+  try {
+    const raw = await file.text();
+    const parsed = JSON.parse(raw);
+    const importedState = parsed.state || parsed;
+    const normalized = normalizeLocalState(importedState, true);
+    const familyName = normalized.familyName || normalized.familyId || "ukjent familie";
+    const ok = confirm(`Vil du importere backup for ${familyName}? Dette erstatter dataene som ligger på denne enheten.`);
+    if (!ok) return;
+    state = normalized;
+    view.mode = "home";
+    view.childId = null;
+    view.childTab = "tasks";
+    view.adultTab = "overview";
+    view.editingTaskId = null;
+    view.editingRewardId = null;
+    view.editingChildId = null;
+    view.creatingTask = false;
+    view.gate = null;
+    localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+    saveState();
+    showToast("Backup er importert.");
+    render();
+  } catch (error) {
+    console.warn("Import failed:", error);
+    showToast("Kunne ikke importere filen.");
+  }
+}
+
 function saveChild(form) {
   const data = new FormData(form);
   const current = getChild(data.get("id"));
@@ -2347,6 +2400,15 @@ function cloudPathLabel() {
   return `${config.stateCollection}/${state.familyId || "local-family"}/${config.stateSubcollection}/${config.stateDocument}`;
 }
 
+function environmentLabel() {
+  return `${APP_CONFIG.environmentLabel || APP_CONFIG.environment || "Ukjent"} (${APP_CONFIG.environment || "local"})`;
+}
+
+function firebaseProjectLabel() {
+  if (!APP_CONFIG.cloudSync.enabled) return "Av";
+  return APP_CONFIG.cloudSync.firebase?.projectId || "Ikke satt";
+}
+
 function setDeviceProfile(profile) {
   localStorage.setItem(DEVICE_PROFILE_KEY, profile);
   showToast("Standardprofil er lagret for denne enheten.");
@@ -2631,6 +2693,9 @@ app.addEventListener("click", (event) => {
   if (action === "refresh-app") {
     refreshApp();
   }
+  if (action === "choose-import") {
+    app.querySelector("[data-import-file]")?.click();
+  }
   if (action === "copy-family-link") {
     copyFamilyLink();
   }
@@ -2664,17 +2729,16 @@ app.addEventListener("click", (event) => {
     }
   }
   if (action === "export-data") {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `familieoppdrag-${dateKey()}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    exportState();
   }
 });
 
 app.addEventListener("change", (event) => {
+  if (event.target.matches("[data-import-file]")) {
+    importStateFile(event.target.files?.[0]);
+    event.target.value = "";
+    return;
+  }
   const filter = event.target.dataset.filter;
   if (!filter) return;
   if (filter === "task-search") view.taskFilters.search = event.target.value;
