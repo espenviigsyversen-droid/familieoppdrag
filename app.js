@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "33";
+const APP_VERSION = "34";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -191,6 +191,7 @@ let view = {
   editingTaskId: null,
   editingRewardId: null,
   editingChildId: null,
+  settingsPage: "menu",
   creatingTask: false,
   taskFilters: { search: "", category: "all", child: "all", status: "all" },
   avatarPickerChildId: null,
@@ -1353,10 +1354,65 @@ function adultHistory() {
 }
 
 function adultSettings() {
+  if (view.settingsPage === "family") return settingsFamily();
+  if (view.settingsPage === "devices") return settingsDevices();
+  if (view.settingsPage === "security") return settingsSecurity();
+  if (view.settingsPage === "backup") return settingsBackup();
+  if (view.settingsPage === "starter") return settingsStarterPackages();
+  if (view.settingsPage === "levels") return settingsLevels();
+  if (view.settingsPage === "cloud") return settingsCloud();
+  if (view.settingsPage === "reset") return settingsReset();
+  return settingsMenu();
+}
+
+function settingsBackButton() {
+  return `<button class="btn secondary" data-action="settings-page" data-page="menu">Tilbake</button>`;
+}
+
+function settingsMenu() {
+  const items = [
+    ["family", "Familie", "Navn, familie-id og datamodell"],
+    ["devices", "Enheter og kobling", "Koblingslenke, familiekode og standardprofiler"],
+    ["security", "PIN og sikkerhet", "Endre voksen-PIN"],
+    ["backup", "Backup og flytting", "Eksporter, importer og flytt data"],
+    ["starter", "Startpakker", "Legg inn standard oppgaver og belønninger"],
+    ["levels", "Nivåer", "Navn og grenser for livstidsstjerner"],
+    ["cloud", "App og sky", "Miljø, Firebase, synk og appoppdatering"],
+    ["reset", "Nullstilling", "Start helt på nytt"]
+  ];
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Innstillinger</h2>
+          <p class="muted">Velg området du vil endre.</p>
+        </div>
+      </div>
+      <div class="settings-menu">
+        ${items.map(([page, title, description]) => `
+          <button class="settings-tile" data-action="settings-page" data-page="${page}">
+            <span>
+              <strong>${title}</strong>
+              <small>${description}</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function settingsFamily() {
   return `
     <section class="panel">
-      <h2>Familie</h2>
-      <p class="muted">Dette gjør appen enklere å dele og flytte til flerfamilie-oppsett senere.</p>
+      <div class="section-title compact-title">
+        <div>
+          <h2>Familie</h2>
+          <p class="muted">Navn, intern id og datamodell.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
       <form data-form="family-settings" class="form-grid" style="margin-top:18px">
         ${field("familyName", "Familienavn", state.familyName || "", "text")}
         <div class="field">
@@ -1371,21 +1427,44 @@ function adultSettings() {
           <button class="btn" type="submit">Lagre familie</button>
         </div>
       </form>
+      <p class="small">Datamodell: versjon ${state.schemaVersion || SCHEMA_VERSION}. Voksne: ${state.adultUsers?.length || 0}. Enheter: ${state.familyDevices?.length || 0}. Invitasjoner: ${state.inviteCodes?.length || 0}.</p>
+    </section>
+  `;
+}
+
+function settingsDevices() {
+  return `
+    <section class="panel">
+      <div class="section-title compact-title">
+        <div>
+          <h2>Enheter og kobling</h2>
+          <p class="muted">Bruk koblingslenken for felles iPad eller direkte barneprofil.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      <div class="pill-row">
+        <span class="pill">Standard: ${deviceProfileLabel()}</span>
+        <span class="pill">Kode: ${state.familyCode || "-"}</span>
+      </div>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="copy-family-link">Kopier koblingslenke</button>
         <button class="btn secondary" data-action="new-family-code">Lag ny kode</button>
+        <button class="btn secondary" data-action="set-device-home">Bruk profilvalg som standard</button>
       </div>
-      <p class="small">Koblingslenken brukes for å velge standardprofil på en ny eller felles enhet. Senere kan samme flyt kobles til ekte invitasjon via Firebase.</p>
-      <p class="small">Miljø: ${escapeText(environmentLabel())}. Firebase-prosjekt: ${escapeText(firebaseProjectLabel())}.</p>
-      <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
-      <p class="small">Datamodell: versjon ${state.schemaVersion || SCHEMA_VERSION}. Voksne: ${state.adultUsers?.length || 0}. Enheter: ${state.familyDevices?.length || 0}. Invitasjoner: ${state.inviteCodes?.length || 0}.</p>
+      <p class="small">Koblingslenken velger standardprofil på enheten. Når Firebase-invitasjoner er klare, kan samme flyt koble nye enheter til riktig familie.</p>
     </section>
+  `;
+}
+
+function settingsSecurity() {
+  return `
     <section class="panel">
-      <h2>Innstillinger</h2>
-      <p class="muted">Appen lagrer lokalt i nettleseren og synker med Firestore når tilkoblingen er aktiv.</p>
-      <div class="pill-row">
-        <span class="pill">Standard: ${deviceProfileLabel()}</span>
-        <span class="pill ${cloud.ready ? "done" : cloud.error ? "rejected" : "pending"}">${cloudStatusLabel()}</span>
+      <div class="section-title compact-title">
+        <div>
+          <h2>PIN og sikkerhet</h2>
+          <p class="muted">Endre voksen-PIN for denne familien.</p>
+        </div>
+        ${settingsBackButton()}
       </div>
       <form data-form="pin-change" class="form-grid" style="margin-top:18px">
         <div class="field">
@@ -1404,16 +1483,40 @@ function adultSettings() {
           <button class="btn" type="submit">Endre PIN</button>
         </div>
       </form>
+    </section>
+  `;
+}
+
+function settingsBackup() {
+  return `
+    <section class="panel">
+      <div class="section-title compact-title">
+        <div>
+          <h2>Backup og flytting</h2>
+          <p class="muted">Eksporter før du flytter appen til nytt miljø.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
         <button class="btn secondary" data-action="choose-import">Importer data</button>
-        <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
       </div>
       <input class="visually-hidden" id="import-file" type="file" accept="application/json,.json" data-import-file>
+      <p class="small">Import erstatter dataene på denne enheten. Ta alltid eksport først.</p>
     </section>
+  `;
+}
+
+function settingsStarterPackages() {
+  return `
     <section class="panel">
-      <h2>Startpakker</h2>
-      <p class="muted">Legg inn standard oppgaver og belønninger for en ny familie. Appen hopper over elementer som allerede finnes.</p>
+      <div class="section-title compact-title">
+        <div>
+          <h2>Startpakker</h2>
+          <p class="muted">Legg inn standard oppgaver og belønninger.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
       <div class="dashboard-grid starter-grid">
         ${STARTER_PACKAGES.map((pack) => `
           <article class="card starter-card">
@@ -1428,9 +1531,19 @@ function adultSettings() {
         `).join("")}
       </div>
     </section>
+  `;
+}
+
+function settingsLevels() {
+  return `
     <section class="panel">
-      <h2>Nivåer</h2>
-      <p class="muted">Endre navn og hvor mange livstidspoeng som kreves for hvert nivå.</p>
+      <div class="section-title compact-title">
+        <div>
+          <h2>Nivåer</h2>
+          <p class="muted">Endre navn og krav for hvert nivå.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
       <form data-form="levels" class="level-editor">
         ${getLevels().map((level, index) => `
           <div class="level-row">
@@ -1450,9 +1563,42 @@ function adultSettings() {
         </div>
       </form>
     </section>
+  `;
+}
+
+function settingsCloud() {
+  return `
+    <section class="panel">
+      <div class="section-title compact-title">
+        <div>
+          <h2>App og sky</h2>
+          <p class="muted">Miljø, Firebase og appoppdatering.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      <div class="pill-row">
+        <span class="pill ${cloud.ready ? "done" : cloud.error ? "rejected" : "pending"}">${cloudStatusLabel()}</span>
+        <span class="pill">${environmentLabel()}</span>
+      </div>
+      <p class="small">Firebase-prosjekt: ${escapeText(firebaseProjectLabel())}</p>
+      <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
+      </div>
+    </section>
+  `;
+}
+
+function settingsReset() {
+  return `
     <section class="panel danger-zone">
-      <h2>Sikkerhet</h2>
-      <p class="muted">Nullstilling sletter appdata og legger inn startoppsettet på nytt. Brukes bare hvis dere vil begynne helt på nytt.</p>
+      <div class="section-title compact-title">
+        <div>
+          <h2>Nullstilling</h2>
+          <p class="muted">Sletter appdata og starter førstegangsoppsettet på nytt.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
       <button class="btn warning" data-action="seed-demo">Nullstill til startdata</button>
     </section>
   `;
@@ -2632,6 +2778,7 @@ app.addEventListener("click", (event) => {
     view.creatingTask = false;
     view.editingRewardId = null;
     view.editingChildId = null;
+    view.settingsPage = "menu";
     render();
   }
   if (action === "complete-task") completeTask(child, task);
@@ -2695,6 +2842,10 @@ app.addEventListener("click", (event) => {
   }
   if (action === "choose-import") {
     app.querySelector("[data-import-file]")?.click();
+  }
+  if (action === "settings-page") {
+    view.settingsPage = button.dataset.page || "menu";
+    render();
   }
   if (action === "copy-family-link") {
     copyFamilyLink();
