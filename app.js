@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "45";
+const APP_VERSION = "46";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -228,6 +228,7 @@ function loadState() {
   }
   return normalizeLocalState({
     familyId: "local-family",
+    cloudFamilyId: null,
     familyName: "",
     familyCode: createFamilyCode(),
     schemaVersion: SCHEMA_VERSION,
@@ -255,6 +256,7 @@ function normalizeLocalState(savedState = {}, existingInstall = true) {
   const hasConfiguredData = Boolean(savedState.setupCompleted || savedState.children?.length || savedState.tasks?.length || savedState.rewards?.length);
   return {
     familyId: savedState.familyId || "local-family",
+    cloudFamilyId: savedState.cloudFamilyId || null,
     familyName: savedState.familyName || "Familien",
     familyCode: savedState.familyCode || familyCodeFromSeed(`${savedState.familyId || "local-family"}-${savedState.createdAt || "start"}`),
     schemaVersion: savedState.schemaVersion || SCHEMA_VERSION,
@@ -273,9 +275,20 @@ function normalizeLocalState(savedState = {}, existingInstall = true) {
     history: savedState.history || [],
     badges: savedState.badges || [],
     syncDiagnostics: normalizeSyncDiagnostics(savedState.syncDiagnostics),
+    cloudMigration: normalizeCloudMigration(savedState.cloudMigration),
     levels: savedState.levels || DEFAULT_LEVELS,
     createdAt: savedState.createdAt || new Date().toISOString(),
     updatedAt: savedState.updatedAt || new Date().toISOString()
+  };
+}
+
+function normalizeCloudMigration(migration) {
+  if (!migration || typeof migration !== "object") return null;
+  return {
+    from: migration.from || "",
+    to: migration.to || "",
+    migratedAt: migration.migratedAt || "",
+    appVersion: migration.appVersion || ""
   };
 }
 
@@ -1679,6 +1692,8 @@ function settingsLevels() {
 
 function settingsCloud() {
   const diagnosis = syncDiagnosisText();
+  const migrationTarget = suggestedCloudFamilyId();
+  const canMigrate = cloud.ready && familyHasGoogleOwner() && cloudFamilyId() !== migrationTarget;
   return `
     <section class="panel">
       <div class="section-title compact-title">
@@ -1694,6 +1709,8 @@ function settingsCloud() {
       </div>
       <p class="small">Firebase-prosjekt: ${escapeText(firebaseProjectLabel())}</p>
       <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
+      <p class="small">Anbefalt familie-sti: ${escapeText(cloudPathLabel(migrationTarget))}</p>
+      ${state.cloudMigration?.migratedAt ? `<p class="small">Sist flyttet: ${formatDate(state.cloudMigration.migratedAt)} fra ${escapeText(state.cloudMigration.from)} til ${escapeText(state.cloudMigration.to)}</p>` : ""}
       ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
       ${cloud.lastFetchedAt ? `<p class="small">Sist hentet fra sky: ${formatDate(cloud.lastFetchedAt)}</p>` : ""}
       ${state.syncDiagnostics?.lastTestAt ? `<p class="small">Siste synk-test: ${formatDate(state.syncDiagnostics.lastTestAt)} fra ${escapeText(state.syncDiagnostics.lastTestDevice || "ukjent enhet")}</p>` : ""}
@@ -1703,6 +1720,7 @@ function settingsCloud() {
       </div>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="force-cloud-save">Lagre til sky nå</button>
+        <button class="btn secondary" data-action="migrate-cloud-family" ${canMigrate ? "" : "disabled"}>Flytt til familie-sti</button>
         <button class="btn secondary" data-action="test-cloud-sync">Test sky-synk</button>
         <button class="btn secondary" data-action="copy-diagnosis">Kopier diagnose</button>
         <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
@@ -2712,13 +2730,22 @@ function cloudStatusClass() {
   return "pending";
 }
 
-function cloudPathLabel() {
+function cloudPathLabel(familyId = cloudFamilyId()) {
   const config = APP_CONFIG.cloudSync;
-  return `${config.stateCollection}/${cloudFamilyId()}/${config.stateSubcollection}/${config.stateDocument}`;
+  return `${config.stateCollection}/${familyId}/${config.stateSubcollection}/${config.stateDocument}`;
 }
 
 function cloudFamilyId() {
-  return APP_CONFIG.cloudSync.pinnedFamilyId || state.familyId || "local-family";
+  return state.cloudFamilyId || APP_CONFIG.cloudSync.pinnedFamilyId || state.familyId || "local-family";
+}
+
+function suggestedCloudFamilyId() {
+  const current = state.familyId || "";
+  const pinned = APP_CONFIG.cloudSync.pinnedFamilyId || "";
+  if (current && current !== "local-family" && current !== pinned) return current;
+  const owner = familyOwner();
+  const seed = owner?.name || owner?.email?.split("@")[0] || state.familyName || "familie";
+  return slugify(`familie-${seed}`) || "familie";
 }
 
 function environmentLabel() {
@@ -2831,6 +2858,9 @@ function syncDiagnosisText() {
     `Venter på sky-lagring: ${cloud.pendingSave ? "ja" : "nei"}`,
     `Sky-status: ${cloudStatusLabel()}`,
     `Sky-sti: ${cloudPathLabel()}`,
+    `Anbefalt familie-sti: ${cloudPathLabel(suggestedCloudFamilyId())}`,
+    `Sky-familie-id: ${cloudFamilyId()}`,
+    `Migrert sky-sti: ${state.cloudMigration?.migratedAt ? `${state.cloudMigration.from} -> ${state.cloudMigration.to}` : "nei"}`,
     `Sist lagret til sky: ${cloud.lastSavedAt ? formatDate(cloud.lastSavedAt) : "aldri i denne økten"}`,
     `Sist hentet fra sky: ${cloud.lastFetchedAt ? formatDate(cloud.lastFetchedAt) : "aldri i denne økten"}`,
     `Siste synk-test: ${state.syncDiagnostics?.lastTestAt ? formatDate(state.syncDiagnostics.lastTestAt) : "ingen"}`,
@@ -2868,6 +2898,74 @@ function runCloudSyncTest() {
   flushCloudSave();
   showToast("Synk-test sendt til sky.");
   render();
+}
+
+async function migrateCloudFamilyPath() {
+  if (!cloud.ready || !cloud.setDoc || !cloud.doc) {
+    showToast("Skyen er ikke klar ennå.");
+    return;
+  }
+  if (!familyHasGoogleOwner()) {
+    showToast("Koble Google-eier før du flytter sky-stien.");
+    return;
+  }
+  const fromFamilyId = cloudFamilyId();
+  const toFamilyId = suggestedCloudFamilyId();
+  if (fromFamilyId === toFamilyId) {
+    showToast("Familien bruker allerede anbefalt sky-sti.");
+    return;
+  }
+  const ok = confirm(`Vil du kopiere familiedata fra ${cloudPathLabel(fromFamilyId)} til ${cloudPathLabel(toFamilyId)}? Gammel sti beholdes som fallback.`);
+  if (!ok) return;
+
+  const now = new Date().toISOString();
+  const migratedState = normalizeLocalState({
+    ...state,
+    familyId: toFamilyId,
+    cloudFamilyId: toFamilyId,
+    cloudMigration: {
+      from: fromFamilyId,
+      to: toFamilyId,
+      migratedAt: now,
+      appVersion: APP_VERSION
+    },
+    updatedAt: now
+  }, true);
+
+  try {
+    cloud.applyingRemote = true;
+    const targetDocRef = cloudDocRefForFamily(toFamilyId);
+    await cloud.setDoc(targetDocRef, {
+      familyId: toFamilyId,
+      familyName: migratedState.familyName || "",
+      migratedFrom: fromFamilyId,
+      state: migratedState,
+      updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
+    }, { merge: true });
+    const sourceDocRef = cloudDocRefForFamily(fromFamilyId);
+    await cloud.setDoc(sourceDocRef, {
+      familyId: fromFamilyId,
+      familyName: migratedState.familyName || "",
+      migratedTo: toFamilyId,
+      state: migratedState,
+      updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
+    }, { merge: true });
+    state = migratedState;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    setCloudDocRef(toFamilyId);
+    cloud.applyingRemote = false;
+    subscribeCloudState();
+    cloud.pendingSave = false;
+    cloud.lastSavedAt = now;
+    cloud.error = "";
+    showToast("Familien er flyttet til ny sky-sti.");
+    render();
+  } catch (error) {
+    cloud.applyingRemote = false;
+    cloud.error = error?.message || "Kunne ikke flytte sky-stien";
+    showToast("Flytting til ny sky-sti feilet.");
+    render();
+  }
 }
 
 function setDeviceProfile(profile) {
@@ -3178,6 +3276,9 @@ app.addEventListener("click", (event) => {
     cloud.pendingSave = true;
     flushCloudSave();
   }
+  if (action === "migrate-cloud-family") {
+    migrateCloudFamilyPath();
+  }
   if (action === "test-cloud-sync") {
     runCloudSyncTest();
   }
@@ -3459,6 +3560,7 @@ async function loadBestCloudState() {
 function cloudFamilyCandidates() {
   const ids = [
     cloudFamilyId(),
+    state.cloudFamilyId,
     state.familyId || "local-family",
     ...(APP_CONFIG.cloudSync.legacyFamilyIds || [])
   ];
@@ -3517,6 +3619,7 @@ function normalizeRemoteState(remoteState) {
     ...loadState(),
     ...remoteState,
     familyCode: remoteState.familyCode || familyCodeFromSeed(`${remoteState.familyId || "local-family"}-${remoteState.createdAt || "remote"}`),
+    cloudFamilyId: remoteState.cloudFamilyId || remoteState.cloudMigration?.to || state.cloudFamilyId || null,
     setupCompleted: remoteState.setupCompleted ?? true,
     ownerUid: remoteState.ownerUid || state.ownerUid || null,
     adultUsers: normalizeAdultUsers((remoteState.adultUsers?.length ? remoteState.adultUsers : state.adultUsers) || []),
@@ -3529,6 +3632,7 @@ function normalizeRemoteState(remoteState) {
     history: remoteState.history || [],
     badges: remoteState.badges || [],
     syncDiagnostics: normalizeSyncDiagnostics(remoteState.syncDiagnostics),
+    cloudMigration: normalizeCloudMigration(remoteState.cloudMigration),
     levels: remoteState.levels || DEFAULT_LEVELS
   };
 }
