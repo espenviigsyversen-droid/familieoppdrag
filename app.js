@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "41";
+const APP_VERSION = "42";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -3200,10 +3200,15 @@ function setCloudDocRef(familyId = cloudFamilyId()) {
 async function loadBestCloudState() {
   const familyIds = cloudFamilyCandidates();
   const snapshots = await Promise.all(familyIds.map(async (familyId) => {
-    const docRef = cloudDocRefForFamily(familyId);
-    const snapshot = await cloud.getDoc(docRef);
-    const remoteState = snapshot.exists() ? snapshot.data()?.state : null;
-    return remoteState ? { familyId, state: remoteState } : null;
+    try {
+      const docRef = cloudDocRefForFamily(familyId);
+      const snapshot = await cloud.getDoc(docRef);
+      const remoteState = snapshot.exists() ? snapshot.data()?.state : null;
+      return remoteState ? { familyId, state: remoteState } : null;
+    } catch (error) {
+      console.warn(`Could not read cloud state for ${familyId}:`, error);
+      return null;
+    }
   }));
   const candidates = snapshots.filter(Boolean);
   if (!candidates.length) return null;
