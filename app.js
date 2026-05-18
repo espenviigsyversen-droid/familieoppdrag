@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "46";
+const APP_VERSION = "47";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -287,7 +287,10 @@ function normalizeCloudMigration(migration) {
   return {
     from: migration.from || "",
     to: migration.to || "",
+    status: migration.status || (migration.migratedAt ? "completed" : ""),
+    attemptedAt: migration.attemptedAt || "",
     migratedAt: migration.migratedAt || "",
+    error: migration.error || "",
     appVersion: migration.appVersion || ""
   };
 }
@@ -1711,6 +1714,8 @@ function settingsCloud() {
       <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
       <p class="small">Anbefalt familie-sti: ${escapeText(cloudPathLabel(migrationTarget))}</p>
       ${state.cloudMigration?.migratedAt ? `<p class="small">Sist flyttet: ${formatDate(state.cloudMigration.migratedAt)} fra ${escapeText(state.cloudMigration.from)} til ${escapeText(state.cloudMigration.to)}</p>` : ""}
+      ${state.cloudMigration?.status === "failed" ? `<p class="small">Siste flytting feilet: ${escapeText(state.cloudMigration.error || "ukjent feil")}</p>` : ""}
+      ${state.cloudMigration?.status === "started" ? `<p class="small">Flytting startet: ${formatDate(state.cloudMigration.attemptedAt)}</p>` : ""}
       ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
       ${cloud.lastFetchedAt ? `<p class="small">Sist hentet fra sky: ${formatDate(cloud.lastFetchedAt)}</p>` : ""}
       ${state.syncDiagnostics?.lastTestAt ? `<p class="small">Siste synk-test: ${formatDate(state.syncDiagnostics.lastTestAt)} fra ${escapeText(state.syncDiagnostics.lastTestDevice || "ukjent enhet")}</p>` : ""}
@@ -2861,6 +2866,8 @@ function syncDiagnosisText() {
     `Anbefalt familie-sti: ${cloudPathLabel(suggestedCloudFamilyId())}`,
     `Sky-familie-id: ${cloudFamilyId()}`,
     `Migrert sky-sti: ${state.cloudMigration?.migratedAt ? `${state.cloudMigration.from} -> ${state.cloudMigration.to}` : "nei"}`,
+    `Migreringsstatus: ${state.cloudMigration?.status || "ikke startet"}`,
+    `Migreringsfeil: ${state.cloudMigration?.error || "ingen"}`,
     `Sist lagret til sky: ${cloud.lastSavedAt ? formatDate(cloud.lastSavedAt) : "aldri i denne økten"}`,
     `Sist hentet fra sky: ${cloud.lastFetchedAt ? formatDate(cloud.lastFetchedAt) : "aldri i denne økten"}`,
     `Siste synk-test: ${state.syncDiagnostics?.lastTestAt ? formatDate(state.syncDiagnostics.lastTestAt) : "ingen"}`,
@@ -2919,6 +2926,16 @@ async function migrateCloudFamilyPath() {
   if (!ok) return;
 
   const now = new Date().toISOString();
+  state.cloudMigration = {
+    from: fromFamilyId,
+    to: toFamilyId,
+    status: "started",
+    attemptedAt: now,
+    migratedAt: "",
+    error: "",
+    appVersion: APP_VERSION
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const migratedState = normalizeLocalState({
     ...state,
     familyId: toFamilyId,
@@ -2926,7 +2943,10 @@ async function migrateCloudFamilyPath() {
     cloudMigration: {
       from: fromFamilyId,
       to: toFamilyId,
+      status: "completed",
+      attemptedAt: now,
       migratedAt: now,
+      error: "",
       appVersion: APP_VERSION
     },
     updatedAt: now
@@ -2962,7 +2982,19 @@ async function migrateCloudFamilyPath() {
     render();
   } catch (error) {
     cloud.applyingRemote = false;
-    cloud.error = error?.message || "Kunne ikke flytte sky-stien";
+    const message = error?.message || "Kunne ikke flytte sky-stien";
+    cloud.error = message;
+    state.cloudMigration = {
+      from: fromFamilyId,
+      to: toFamilyId,
+      status: "failed",
+      attemptedAt: now,
+      migratedAt: "",
+      error: message,
+      appVersion: APP_VERSION
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    queueCloudSave();
     showToast("Flytting til ny sky-sti feilet.");
     render();
   }
