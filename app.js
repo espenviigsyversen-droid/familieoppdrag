@@ -1,7 +1,8 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "31";
+const APP_VERSION = "32";
+const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
   cloudSync: {
@@ -212,7 +213,12 @@ function loadState() {
     familyId: "local-family",
     familyName: "",
     familyCode: createFamilyCode(),
+    schemaVersion: SCHEMA_VERSION,
     setupCompleted: false,
+    ownerUid: null,
+    adultUsers: [],
+    familyDevices: [],
+    inviteCodes: [],
     parentPinHash: PIN_HASH,
     children: [],
     tasks: [],
@@ -233,7 +239,12 @@ function normalizeLocalState(savedState = {}, existingInstall = true) {
     familyId: savedState.familyId || "local-family",
     familyName: savedState.familyName || "Familien",
     familyCode: savedState.familyCode || familyCodeFromSeed(`${savedState.familyId || "local-family"}-${savedState.createdAt || "start"}`),
+    schemaVersion: savedState.schemaVersion || SCHEMA_VERSION,
     setupCompleted: savedState.setupCompleted ?? (existingInstall && hasConfiguredData),
+    ownerUid: savedState.ownerUid || null,
+    adultUsers: normalizeAdultUsers(savedState.adultUsers || []),
+    familyDevices: normalizeFamilyDevices(savedState.familyDevices || []),
+    inviteCodes: normalizeInviteCodes(savedState.inviteCodes || [], savedState.familyCode),
     parentPinHash: savedState.parentPinHash || PIN_HASH,
     children: normalizeChildren(savedState.children || childrenSeed),
     tasks: normalizeTasks(savedState.tasks || taskSeeds),
@@ -263,6 +274,49 @@ function normalizeChildren(children) {
   }));
 }
 
+function normalizeAdultUsers(users) {
+  return users.map((user) => ({
+    uid: user.uid || null,
+    email: user.email || "",
+    role: user.role || "adult",
+    status: user.status || "active",
+    addedAt: user.addedAt || new Date().toISOString()
+  }));
+}
+
+function normalizeFamilyDevices(devices) {
+  return devices.map((device) => ({
+    id: device.id || crypto.randomUUID(),
+    label: device.label || "Familieenhet",
+    profile: device.profile || "home",
+    status: device.status || "active",
+    linkedAt: device.linkedAt || new Date().toISOString(),
+    lastSeenAt: device.lastSeenAt || null
+  }));
+}
+
+function normalizeInviteCodes(invites, familyCode) {
+  const normalized = invites.map((invite) => ({
+    id: invite.id || crypto.randomUUID(),
+    code: normalizeFamilyCode(invite.code || familyCode || createFamilyCode()),
+    type: invite.type || "device",
+    status: invite.status || "active",
+    createdAt: invite.createdAt || new Date().toISOString(),
+    expiresAt: invite.expiresAt || null
+  }));
+  if (!normalized.length && familyCode) {
+    normalized.push({
+      id: crypto.randomUUID(),
+      code: normalizeFamilyCode(familyCode),
+      type: "device",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      expiresAt: null
+    });
+  }
+  return normalized;
+}
+
 function normalizeTasks(tasks) {
   return tasks.map((task, index) => ({
     ...task,
@@ -281,10 +335,30 @@ function normalizeRewards(rewards) {
 }
 
 function saveState() {
+  syncFamilyCodeInvite();
   state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   ensureCloudFamilyPath();
   queueCloudSave();
+}
+
+function syncFamilyCodeInvite() {
+  if (!state.familyCode) state.familyCode = createFamilyCode();
+  if (!Array.isArray(state.inviteCodes)) state.inviteCodes = [];
+  const code = normalizeFamilyCode(state.familyCode);
+  const existing = state.inviteCodes.find((invite) => normalizeFamilyCode(invite.code) === code && invite.type === "device");
+  if (existing) {
+    existing.status = "active";
+    return;
+  }
+  state.inviteCodes.push({
+    id: crypto.randomUUID(),
+    code,
+    type: "device",
+    status: "active",
+    createdAt: new Date().toISOString(),
+    expiresAt: null
+  });
 }
 
 function render() {
@@ -1301,6 +1375,7 @@ function adultSettings() {
       </div>
       <p class="small">Koblingslenken brukes for å velge standardprofil på en ny eller felles enhet. Senere kan samme flyt kobles til ekte invitasjon via Firebase.</p>
       <p class="small">Sky-sti: ${escapeText(cloudPathLabel())}</p>
+      <p class="small">Datamodell: versjon ${state.schemaVersion || SCHEMA_VERSION}. Voksne: ${state.adultUsers?.length || 0}. Enheter: ${state.familyDevices?.length || 0}. Invitasjoner: ${state.inviteCodes?.length || 0}.</p>
     </section>
     <section class="panel">
       <h2>Innstillinger</h2>
@@ -1752,7 +1827,12 @@ async function completeFirstSetup(form) {
     familyId: uniqueFamilyId(familyName),
     familyName,
     familyCode: createFamilyCode(),
+    schemaVersion: SCHEMA_VERSION,
     setupCompleted: true,
+    ownerUid: null,
+    adultUsers: [],
+    familyDevices: [],
+    inviteCodes: [],
     parentPinHash: await hashPin(pin),
     children: childNames.map((name, index) => ({
       id: uniqueChildIdForList(name, childNames.slice(0, index)),
@@ -2556,6 +2636,9 @@ app.addEventListener("click", (event) => {
   }
   if (action === "new-family-code" && confirm("Vil du lage en ny familiekode? Gamle koblingslenker vil slutte å passe.")) {
     state.familyCode = createFamilyCode();
+    state.inviteCodes = (state.inviteCodes || []).map((invite) =>
+      invite.type === "device" ? { ...invite, status: "revoked" } : invite
+    );
     saveState();
     showToast("Ny familiekode er laget.");
     render();

@@ -2,6 +2,8 @@
 
 En enkel familieapp for oppgaver, stjerner og belønninger. Appen kan kjøres som en statisk webapp og lagrer data lokalt i nettleseren. Hvis Firebase er slått på, synkroniseres data med Firestore.
 
+Se `FIREBASE_PLAN.md` for foreslått flerfamilie-struktur, sikkerhetsmodell og neste steg mot innlogging.
+
 ## Før appen tas i bruk av en ny familie
 
 1. Opprett et eget Firebase-prosjekt.
