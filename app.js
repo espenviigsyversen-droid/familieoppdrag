@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "28";
+const APP_VERSION = "29";
 const FIREBASE_ENABLED = true;
 const FAMILY_ID = "familieoppdrag";
 const FIREBASE_CONFIG = {
@@ -190,30 +190,35 @@ function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
     try {
-      return normalizeLocalState(JSON.parse(raw));
+      return normalizeLocalState(JSON.parse(raw), true);
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }
   }
   return normalizeLocalState({
     familyId: "local-family",
+    familyName: "",
+    setupCompleted: false,
     parentPinHash: PIN_HASH,
-    children: childrenSeed,
-    tasks: taskSeeds,
+    children: [],
+    tasks: [],
     completions: [],
-    rewards: rewardSeeds,
+    rewards: [],
     redemptions: [],
     transactions: [],
     history: [],
     levels: DEFAULT_LEVELS,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
-  });
+  }, false);
 }
 
-function normalizeLocalState(savedState = {}) {
+function normalizeLocalState(savedState = {}, existingInstall = true) {
+  const hasConfiguredData = Boolean(savedState.setupCompleted || savedState.children?.length || savedState.tasks?.length || savedState.rewards?.length);
   return {
     familyId: savedState.familyId || "local-family",
+    familyName: savedState.familyName || "Familien",
+    setupCompleted: savedState.setupCompleted ?? (existingInstall && hasConfiguredData),
     parentPinHash: savedState.parentPinHash || PIN_HASH,
     children: normalizeChildren(savedState.children || childrenSeed),
     tasks: normalizeTasks(savedState.tasks || taskSeeds),
@@ -267,7 +272,9 @@ function saveState() {
 }
 
 function render() {
-  if (view.gate) {
+  if (!state.setupCompleted) {
+    renderSetup();
+  } else if (view.gate) {
     renderPinGate();
   } else if (view.mode === "adult") {
     renderAdult();
@@ -278,6 +285,67 @@ function render() {
   }
 }
 
+function renderSetup() {
+  const packageOptions = STARTER_PACKAGES.map((pack) => `
+    <label class="setup-option">
+      <input type="checkbox" name="starterPackage" value="${pack.id}" checked>
+      <span>
+        <strong>${pack.title}</strong>
+        <small>${pack.description}</small>
+      </span>
+    </label>
+  `).join("");
+
+  app.innerHTML = `
+    <header class="topbar setup-topbar">
+      <div class="brand">
+        <div class="brand-mark">⭐</div>
+        <div>
+          <p class="eyebrow">Familieoppdrag</p>
+          <h1>Sett opp familien</h1>
+        </div>
+      </div>
+    </header>
+    <section class="setup-shell">
+      <div class="setup-intro">
+        <h2>Klar på noen minutter</h2>
+        <p>Legg inn familien, barna og en voksen-PIN. Etterpå kan alt justeres fra voksenpanelet.</p>
+      </div>
+      <form data-form="first-setup" class="panel setup-form">
+        <div class="form-grid">
+          ${field("familyName", "Familienavn", state.familyName === "Familien" ? "" : state.familyName, "text")}
+          <div class="field">
+            <label>Ny voksen-PIN</label>
+            <input name="pin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" required>
+          </div>
+          <div class="field">
+            <label>Gjenta PIN</label>
+            <input name="repeatPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" required>
+          </div>
+        </div>
+        <div class="setup-block">
+          <h3>Barn</h3>
+          <div class="form-grid">
+            ${[0, 1, 2, 3, 4].map((index) => `
+              <div class="field">
+                <label>Barn ${index + 1}${index === 0 ? "" : " (valgfritt)"}</label>
+                <input name="childName" type="text" value="" ${index === 0 ? "required" : ""}>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+        <div class="setup-block">
+          <h3>Startpakker</h3>
+          <div class="setup-options">${packageOptions}</div>
+        </div>
+        <div class="actions">
+          <button class="btn" type="submit">Start familien</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
 function renderHome() {
   app.innerHTML = `
     <header class="topbar">
@@ -285,7 +353,7 @@ function renderHome() {
         <div class="brand-mark">⭐</div>
         <div>
           <p class="eyebrow">Familieoppdrag</p>
-          <h1>Velg profil</h1>
+          <h1>${escapeText(state.familyName || "Velg profil")}</h1>
         </div>
       </div>
       <button class="btn secondary" data-action="adult-login">🔐 Voksen</button>
@@ -1150,6 +1218,20 @@ function adultHistory() {
 function adultSettings() {
   return `
     <section class="panel">
+      <h2>Familie</h2>
+      <p class="muted">Dette gjør appen enklere å dele og flytte til flerfamilie-oppsett senere.</p>
+      <form data-form="family-settings" class="form-grid" style="margin-top:18px">
+        ${field("familyName", "Familienavn", state.familyName || "", "text")}
+        <div class="field">
+          <label>Intern familie-id</label>
+          <input name="familyId" type="text" value="${escapeAttr(state.familyId || "local-family")}" required>
+        </div>
+        <div class="actions" style="align-self:end">
+          <button class="btn" type="submit">Lagre familie</button>
+        </div>
+      </form>
+    </section>
+    <section class="panel">
       <h2>Innstillinger</h2>
       <p class="muted">Appen lagrer lokalt i nettleseren og synker med Firestore når tilkoblingen er aktiv.</p>
       <div class="pill-row">
@@ -1582,6 +1664,74 @@ function saveReward(form) {
   render();
 }
 
+async function completeFirstSetup(form) {
+  const data = new FormData(form);
+  const familyName = String(data.get("familyName") || "").trim();
+  const pin = String(data.get("pin") || "");
+  const repeatPin = String(data.get("repeatPin") || "");
+  const childNames = data.getAll("childName").map((name) => String(name).trim()).filter(Boolean);
+
+  if (!familyName) return showToast("Familien må ha et navn.");
+  if (pin.length < 4) return showToast("PIN må ha minst 4 tegn.");
+  if (pin !== repeatPin) return showToast("PIN-kodene er ikke like.");
+  if (!childNames.length) return showToast("Legg inn minst ett barn.");
+
+  const now = new Date().toISOString();
+  state = normalizeLocalState({
+    familyId: uniqueFamilyId(familyName),
+    familyName,
+    setupCompleted: true,
+    parentPinHash: await hashPin(pin),
+    children: childNames.map((name, index) => ({
+      id: uniqueChildIdForList(name, childNames.slice(0, index)),
+      name,
+      avatar: AVATAR_ICONS[index % AVATAR_ICONS.length],
+      color: CHILD_COLORS[index % CHILD_COLORS.length],
+      pointsBalance: 0,
+      lifetimePoints: 0,
+      streak: 0,
+      active: true
+    })),
+    tasks: [],
+    completions: [],
+    rewards: [],
+    redemptions: [],
+    transactions: [],
+    history: [],
+    badges: [],
+    levels: DEFAULT_LEVELS,
+    createdAt: now,
+    updatedAt: now
+  }, true);
+
+  data.getAll("starterPackage").forEach((packageId) => {
+    addStarterPackage(packageId, activeChildIds());
+  });
+
+  view.mode = "home";
+  view.childId = null;
+  view.childTab = "tasks";
+  view.adultTab = "overview";
+  view.adultUnlocked = false;
+  localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+  saveState();
+  showToast("Familien er satt opp.");
+  render();
+}
+
+function saveFamilySettings(form) {
+  const data = new FormData(form);
+  const familyName = String(data.get("familyName") || "").trim();
+  const familyId = slugify(data.get("familyId") || "") || "local-family";
+  if (!familyName) return showToast("Familien må ha et navn.");
+  state.familyName = familyName;
+  state.familyId = familyId;
+  state.setupCompleted = true;
+  saveState();
+  showToast("Familieinnstillinger er lagret.");
+  render();
+}
+
 function saveChild(form) {
   const data = new FormData(form);
   const current = getChild(data.get("id"));
@@ -1639,11 +1789,39 @@ function uniqueChildId(name) {
   return id;
 }
 
+function uniqueChildIdForList(name, previousNames) {
+  const previousIds = new Set(previousNames.map((item) => slugify(item)).filter(Boolean));
+  const base = slugify(name) || "barn";
+  let id = base;
+  let counter = 2;
+  while (previousIds.has(id)) {
+    id = `${base}-${counter}`;
+    counter += 1;
+  }
+  return id;
+}
+
+function uniqueFamilyId(name) {
+  return `family-${slugify(name) || crypto.randomUUID().slice(0, 8)}`;
+}
+
 function applyStarterPackage(packageId) {
-  const pack = STARTER_PACKAGES.find((item) => item.id === packageId);
-  if (!pack) return;
   const childIds = activeChildIds();
   if (!childIds.length) return showToast("Legg til minst ett aktivt barn først.");
+  const { addedTasks, addedRewards } = addStarterPackage(packageId, childIds);
+
+  if (!addedTasks && !addedRewards) {
+    showToast("Alt i denne pakken finnes allerede.");
+    return;
+  }
+  saveState();
+  showToast(`La til ${addedTasks} oppgaver og ${addedRewards} belønninger.`);
+  render();
+}
+
+function addStarterPackage(packageId, childIds) {
+  const pack = STARTER_PACKAGES.find((item) => item.id === packageId);
+  if (!pack) return { addedTasks: 0, addedRewards: 0 };
   let addedTasks = 0;
   let addedRewards = 0;
 
@@ -1661,13 +1839,7 @@ function applyStarterPackage(packageId) {
     addedRewards += 1;
   });
 
-  if (!addedTasks && !addedRewards) {
-    showToast("Alt i denne pakken finnes allerede.");
-    return;
-  }
-  saveState();
-  showToast(`La til ${addedTasks} oppgaver og ${addedRewards} belønninger.`);
-  render();
+  return { addedTasks, addedRewards };
 }
 
 function taskFromTemplate(template, assignedChildren) {
@@ -2086,6 +2258,10 @@ function escapeAttr(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 }
 
+function escapeText(value) {
+  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
 function slugify(value) {
   return String(value)
     .trim()
@@ -2228,11 +2404,11 @@ app.addEventListener("click", (event) => {
       showToast("Nullstilling ble avbrutt.");
       return;
     }
-    if (confirm("Er du helt sikker på at du vil nullstille appen til startdata? Dette kan ikke angres.")) {
+    if (confirm("Er du helt sikker på at du vil nullstille appen og starte førstegangsoppsettet på nytt? Dette kan ikke angres.")) {
       localStorage.removeItem(STORAGE_KEY);
       state = loadState();
       saveState();
-      showToast("Appen er nullstilt til startdata.");
+      showToast("Appen er nullstilt.");
       render();
     }
   }
@@ -2318,6 +2494,11 @@ app.addEventListener("submit", async (event) => {
     showToast("PIN-koden er endret.");
     render();
   }
+  if (form.dataset.form === "first-setup") {
+    await completeFirstSetup(form);
+    return;
+  }
+  if (form.dataset.form === "family-settings") saveFamilySettings(form);
   if (form.dataset.form === "task") saveTask(form);
   if (form.dataset.form === "reward") saveReward(form);
   if (form.dataset.form === "child") saveChild(form);

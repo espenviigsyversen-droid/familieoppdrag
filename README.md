@@ -16,9 +16,15 @@ En enkel familieapp for oppgaver, stjerner og belønninger. Appen kan kjøres so
    - barnas navn, ikoner og farger
    - oppgaver og belønninger
 
+Hvis appen åpnes uten lagrede data, vises førstegangsoppsettet automatisk. Der kan familien sette familienavn, voksen-PIN, barn og startpakker uten å redigere kode.
+
 ## Startpakker
 
 I voksenmodus finnes det startpakker under `Innstillinger`. Disse kan legge inn standard oppgaver og belønninger for en ny familie. Appen hopper over oppgaver og belønninger som allerede finnes, så en pakke kan trykkes uten at eksisterende oppsett slettes.
+
+## Familieinnstillinger
+
+Familienavn og intern familie-id kan endres under `Innstillinger`. Dette er forberedelse til en senere flerfamilie-versjon med sentral hosting, innlogging og invitasjonslenker.
 
 ## Viktig om Firebase
 

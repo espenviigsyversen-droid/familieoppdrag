@@ -363,6 +363,86 @@ button:disabled {
   grid-template-columns: 1fr;
 }
 
+.setup-topbar {
+  justify-content: center;
+}
+
+.setup-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.setup-intro {
+  min-height: 320px;
+  padding: 28px;
+  border-radius: 28px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  box-shadow: var(--shadow);
+}
+
+.setup-intro h2 {
+  max-width: 9ch;
+  margin: 0 0 12px;
+  font-size: clamp(2.1rem, 6vw, 4.5rem);
+  line-height: 0.98;
+}
+
+.setup-intro p {
+  max-width: 34rem;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 700;
+}
+
+.setup-form {
+  display: grid;
+  gap: 18px;
+}
+
+.setup-block {
+  display: grid;
+  gap: 12px;
+}
+
+.setup-block h3 {
+  margin: 0;
+}
+
+.setup-options {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.setup-option input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+
+.setup-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.setup-option small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .hero-main {
   position: relative;
   overflow: hidden;
@@ -817,6 +897,7 @@ th {
   }
 
   .hero,
+  .setup-shell,
   .profile-grid,
   .dashboard-grid,
   .form-grid,
@@ -827,6 +908,10 @@ th {
 
   .hero-main {
     min-height: 230px;
+  }
+
+  .setup-intro {
+    min-height: auto;
   }
 
   .hero-stats {
