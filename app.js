@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "47";
+const APP_VERSION = "48";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -11,6 +11,7 @@ const APP_CONFIG = {
     enabled: true,
     provider: "firebase",
     stateCollection: "families",
+    codeCollection: "familyCodes",
     stateSubcollection: "appState",
     stateDocument: "current",
     pinnedFamilyId: "familieoppdrag",
@@ -49,6 +50,8 @@ const cloud = {
   pendingSave: false,
   lastSavedAt: null,
   lastFetchedAt: null,
+  familyCodeLookupStatus: "",
+  familyCodeLookupError: "",
   applyingRemote: false
 };
 
@@ -446,6 +449,7 @@ function renderLoading() {
 function renderDeviceConnect() {
   const code = pendingFamilyCode();
   const matchesFamily = normalizeFamilyCode(code) === normalizeFamilyCode(state.familyCode);
+  const lookupFailed = Boolean(cloud.familyCodeLookupError);
   app.innerHTML = `
     <header class="topbar setup-topbar">
       <div class="brand">
@@ -475,7 +479,7 @@ function renderDeviceConnect() {
         ` : `
           <div class="setup-block">
             <h3>Kode: ${escapeText(code || "")}</h3>
-            <p class="muted">Foreløpig må familien finnes på enheten før koden kan brukes. Dette er forberedelsen til ekte invitasjonslenker med sentral hosting.</p>
+            <p class="muted">${lookupFailed ? `Kunne ikke finne familie med denne koden: ${escapeText(cloud.familyCodeLookupError)}` : "Koden ble ikke funnet i familie-registeret. Sjekk at koden er riktig, og at voksen har åpnet appen minst én gang etter siste oppdatering."}</p>
           </div>
         `}
         <div class="actions">
@@ -2863,6 +2867,8 @@ function syncDiagnosisText() {
     `Venter på sky-lagring: ${cloud.pendingSave ? "ja" : "nei"}`,
     `Sky-status: ${cloudStatusLabel()}`,
     `Sky-sti: ${cloudPathLabel()}`,
+    `Familiekode-oppslag: ${cloud.familyCodeLookupStatus || "ikke brukt"}`,
+    `Familiekode-oppslagsfeil: ${cloud.familyCodeLookupError || "ingen"}`,
     `Anbefalt familie-sti: ${cloudPathLabel(suggestedCloudFamilyId())}`,
     `Sky-familie-id: ${cloudFamilyId()}`,
     `Migrert sky-sti: ${state.cloudMigration?.migratedAt ? `${state.cloudMigration.from} -> ${state.cloudMigration.to}` : "nei"}`,
@@ -3529,6 +3535,8 @@ async function initFirebaseSync() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
+    await resolvePendingFamilyCode();
+
     view.bootMessage = "Henter familiedata";
     render();
     const remoteState = await loadBestCloudState();
@@ -3541,7 +3549,7 @@ async function initFirebaseSync() {
       setCloudDocRef();
       await writeCloudState();
     } else {
-      await writeCloudState();
+      if (!pendingFamilyCode()) await writeCloudState();
     }
 
     subscribeCloudState();
@@ -3568,6 +3576,53 @@ function setCloudDocRef(familyId = cloudFamilyId()) {
     config.stateSubcollection,
     config.stateDocument
   );
+}
+
+function familyCodeDocRef(code = state.familyCode) {
+  if (!cloud.doc) return null;
+  const normalizedCode = normalizeFamilyCode(code);
+  if (!normalizedCode) return null;
+  return cloud.doc(
+    cloud.db,
+    APP_CONFIG.cloudSync.codeCollection || "familyCodes",
+    normalizedCode
+  );
+}
+
+async function resolvePendingFamilyCode() {
+  const code = normalizeFamilyCode(pendingFamilyCode());
+  if (!code || !cloud.getDoc || !cloud.doc) return null;
+  try {
+    cloud.familyCodeLookupStatus = `Søker etter ${code}`;
+    cloud.familyCodeLookupError = "";
+    const docRef = familyCodeDocRef(code);
+    const snapshot = docRef ? await cloud.getDoc(docRef) : null;
+    if (!snapshot?.exists()) {
+      cloud.familyCodeLookupStatus = "ikke funnet";
+      cloud.familyCodeLookupError = "Familiekoden finnes ikke i Firestore-registeret.";
+      return null;
+    }
+    const data = snapshot.data() || {};
+    const familyId = data.cloudFamilyId || data.familyId || "";
+    if (!familyId) {
+      cloud.familyCodeLookupStatus = "ugyldig register";
+      cloud.familyCodeLookupError = "Familiekoden mangler familie-id.";
+      return null;
+    }
+    state.cloudFamilyId = familyId;
+    state.familyId = familyId;
+    state.familyCode = code;
+    cloud.familyCodeLookupStatus = `fant ${familyId}`;
+    cloud.familyCodeLookupError = "";
+    setCloudDocRef(familyId);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return familyId;
+  } catch (error) {
+    cloud.familyCodeLookupStatus = "feilet";
+    cloud.familyCodeLookupError = error?.message || "Kunne ikke slå opp familiekoden.";
+    console.warn("Family code lookup failed:", error);
+    return null;
+  }
 }
 
 async function loadBestCloudState() {
@@ -3701,6 +3756,25 @@ async function writeCloudState() {
     familyId: state.familyId || "local-family",
     familyName: state.familyName || "",
     state,
+    updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
+  }, { merge: true });
+  await writeFamilyCodeIndex().catch((error) => {
+    cloud.familyCodeLookupStatus = "register kunne ikke lagres";
+    cloud.familyCodeLookupError = error?.message || "Kunne ikke lagre familiekode-register.";
+    console.warn("Family code index write failed:", error);
+  });
+}
+
+async function writeFamilyCodeIndex() {
+  if (!cloud.setDoc || !state.familyCode || !state.setupCompleted) return;
+  const docRef = familyCodeDocRef(state.familyCode);
+  if (!docRef) return;
+  await cloud.setDoc(docRef, {
+    code: normalizeFamilyCode(state.familyCode),
+    familyId: cloudFamilyId(),
+    cloudFamilyId: cloudFamilyId(),
+    familyName: state.familyName || "",
+    ownerUid: state.ownerUid || null,
     updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
   }, { merge: true });
 }
