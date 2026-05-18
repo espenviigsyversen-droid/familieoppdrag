@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "39";
+const APP_VERSION = "40";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -13,6 +13,7 @@ const APP_CONFIG = {
     stateCollection: "families",
     stateSubcollection: "appState",
     stateDocument: "current",
+    pinnedFamilyId: "familieoppdrag",
     legacyFamilyIds: ["familieoppdrag", "local-family"],
     firebase: {
       apiKey: "AIzaSyAMPfQ9gX9rbuvcPsVjYVtq5IT_orjDBPs",
@@ -2638,7 +2639,11 @@ function cloudStatusLabel() {
 
 function cloudPathLabel() {
   const config = APP_CONFIG.cloudSync;
-  return `${config.stateCollection}/${state.familyId || "local-family"}/${config.stateSubcollection}/${config.stateDocument}`;
+  return `${config.stateCollection}/${cloudFamilyId()}/${config.stateSubcollection}/${config.stateDocument}`;
+}
+
+function cloudFamilyId() {
+  return APP_CONFIG.cloudSync.pinnedFamilyId || state.familyId || "local-family";
 }
 
 function environmentLabel() {
@@ -3150,7 +3155,7 @@ async function initFirebaseSync() {
       state = normalizeRemoteState(remoteState);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       cloud.applyingRemote = false;
-      setCloudDocRef(state.familyId || "local-family");
+      setCloudDocRef();
       await writeCloudState();
     } else {
       await writeCloudState();
@@ -3168,7 +3173,7 @@ async function initFirebaseSync() {
   }
 }
 
-function setCloudDocRef(familyId = state.familyId || "local-family") {
+function setCloudDocRef(familyId = cloudFamilyId()) {
   if (!cloud.doc) return;
   const config = APP_CONFIG.cloudSync;
   cloud.familyId = familyId || "local-family";
@@ -3197,6 +3202,7 @@ async function loadBestCloudState() {
 
 function cloudFamilyCandidates() {
   const ids = [
+    cloudFamilyId(),
     state.familyId || "local-family",
     ...(APP_CONFIG.cloudSync.legacyFamilyIds || [])
   ];
@@ -3238,7 +3244,7 @@ function subscribeCloudState() {
 
 function ensureCloudFamilyPath() {
   if (!cloud.enabled || !cloud.ready || !cloud.doc || !cloud.db) return;
-  const currentFamilyId = state.familyId || "local-family";
+  const currentFamilyId = cloudFamilyId();
   if (cloud.familyId === currentFamilyId) return;
   setCloudDocRef();
   subscribeCloudState();
