@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "51";
+const APP_VERSION = "52";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -419,6 +419,8 @@ function syncFamilyCodeInvite() {
 function render() {
   if (view.booting) {
     renderLoading();
+  } else if (isSetupPreview()) {
+    renderSetup();
   } else if (pendingFamilyCode() && state.setupCompleted) {
     renderDeviceConnect();
   } else if (!state.setupCompleted) {
@@ -509,6 +511,7 @@ function renderDeviceConnect() {
 function renderSetup() {
   ensureSetupDraft();
   const steps = setupSteps();
+  const preview = isSetupPreview();
   const step = Math.min(Math.max(view.setupStep || 0, 0), steps.length - 1);
   view.setupStep = step;
   const current = steps[step];
@@ -520,6 +523,7 @@ function renderSetup() {
         <div>
           <p class="eyebrow">Familieoppdrag</p>
           <h1>Oppstartsveileder</h1>
+          ${preview ? `<div class="pill-row"><span class="pill pending">Forhåndsvisning</span></div>` : ""}
         </div>
       </div>
     </header>
@@ -536,7 +540,7 @@ function renderSetup() {
         ${setupStepContent(current.id)}
         <div class="actions setup-actions">
           ${step > 0 ? `<button class="btn secondary" type="button" data-action="setup-back">Tilbake</button>` : ""}
-          ${step < steps.length - 1 ? `<button class="btn" type="button" data-action="setup-next">Neste</button>` : `<button class="btn" type="submit">Start familien</button>`}
+          ${step < steps.length - 1 ? `<button class="btn" type="button" data-action="setup-next">Neste</button>` : `<button class="btn" type="submit">${preview ? "Avslutt forhåndsvisning" : "Start familien"}</button>`}
         </div>
       </form>
     </section>
@@ -569,16 +573,33 @@ function ensureSetupDraft() {
 
 function setupStepContent(stepId) {
   const draft = view.setupDraft;
+  const preview = isSetupPreview();
   if (stepId === "welcome") {
     return `
       <div class="setup-block">
         <h3>Velkommen til Familieoppdrag</h3>
         <p class="muted">Veilederen hjelper deg å lage en familie, legge inn barn, velge startmaler og sette voksen-PIN.</p>
         <div class="setup-note">Du kan endre navn, oppgaver, belønninger, barn, PIN og deling senere fra voksenpanelet.</div>
+        ${preview ? `<div class="setup-note">Forhåndsvisning er trygg: Den logger ikke inn, oppretter ikke familie og skriver ikke til Firestore.</div>` : ""}
       </div>
     `;
   }
   if (stepId === "google") {
+    if (preview) {
+      return `
+        <div class="setup-block auth-setup">
+          <h3>Voksen med Google</h3>
+          <p class="muted">I vanlig oppstart må minst én voksen logge inn med Google før familien kan deles til andre enheter.</p>
+          <div class="auth-status-card ready">
+            <div>
+              <strong>Google-steg forhåndsvises</strong>
+              <small>Ingen innlogging gjøres i forhåndsvisning.</small>
+            </div>
+            <button class="btn secondary" type="button" disabled>Forhåndsvisning</button>
+          </div>
+        </div>
+      `;
+    }
     return `
       <div class="setup-block auth-setup">
         <h3>Voksen med Google</h3>
@@ -2286,6 +2307,7 @@ function collectSetupDraft() {
 
 function validateSetupStep(stepId) {
   const draft = collectSetupDraft();
+  if (isSetupPreview()) return true;
   if (stepId === "google" && !familyHasGoogleOwner()) {
     showToast("Logg inn med Google før du går videre.");
     return false;
@@ -2330,6 +2352,16 @@ function setupBack() {
 
 async function completeFirstSetup(form) {
   const draft = collectSetupDraft();
+  if (isSetupPreview()) {
+    view.setupStep = 0;
+    view.setupDraft = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("preview");
+    window.history.replaceState({}, "", url);
+    showToast("Forhåndsvisning avsluttet. Ingenting ble lagret.");
+    render();
+    return;
+  }
   const familyName = draft.familyName;
   const pin = draft.pin;
   const repeatPin = draft.repeatPin;
@@ -3253,6 +3285,11 @@ function pendingFamilyCode() {
   return params.get("familiekode") || params.get("join") || "";
 }
 
+function isSetupPreview() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("preview") === "setup";
+}
+
 function pendingAdultInviteCode() {
   const params = new URLSearchParams(window.location.search);
   return params.get("voksenkode") || params.get("adultInvite") || "";
@@ -4142,7 +4179,9 @@ function validateStartupProfile() {
 async function startApp() {
   render();
   await registerServiceWorkerAndUpdate();
-  await initFirebaseSync();
+  if (!isSetupPreview()) {
+    await initFirebaseSync();
+  }
   validateStartupProfile();
   view.booting = false;
   render();
