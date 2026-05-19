@@ -275,6 +275,12 @@ button:disabled {
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
 
+.motivation-grid {
+  display: grid;
+  grid-template-columns: 1.15fr repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .badge-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -947,6 +953,82 @@ button:disabled {
   background: #eef2ff;
 }
 
+.focus-card {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  background: linear-gradient(135deg, #fff7dd, #ecfeff);
+}
+
+.focus-card h2,
+.focus-card p {
+  margin: 0;
+}
+
+.focus-icon,
+.mini-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(228, 231, 245, 0.8);
+}
+
+.focus-icon {
+  width: 64px;
+  height: 64px;
+  font-size: 2rem;
+}
+
+.mini-progress-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 150px;
+}
+
+.mini-progress-head {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.mini-progress-head h3,
+.mini-progress-head p,
+.mini-progress-row {
+  margin: 0;
+}
+
+.mini-icon {
+  width: 46px;
+  height: 46px;
+  font-size: 1.4rem;
+}
+
+.mini-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.mini-progress-row strong {
+  color: var(--ink);
+  font-size: 1.35rem;
+}
+
+.mini-progress {
+  margin-top: 10px;
+}
+
+.next-badge-card {
+  border-color: rgba(108, 99, 255, 0.32);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(238, 242, 255, 0.88));
+}
+
 .task-card p,
 .reward-card p,
 .panel p {
@@ -1307,6 +1389,7 @@ th {
   .share-checklist,
   .share-status-grid,
   .dashboard-grid,
+  .motivation-grid,
   .form-grid,
   .filter-bar,
   .level-row {

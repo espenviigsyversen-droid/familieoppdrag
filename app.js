@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "62";
+const APP_VERSION = "63";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -1014,8 +1014,31 @@ function childMeView(child) {
   const history = state.history.filter((item) => item.childId === child.id).slice(0, 12);
   const rewards = completedRewardRedemptions(child.id).slice(0, 12);
   const badges = earnedBadges(child.id);
+  const stats = childStats(child.id);
+  const nextBadges = badgeProgressList(child.id).slice(0, 3);
   return `
     ${levelProgressCard(child, "full")}
+    <section>
+      <div class="section-title"><h2>Min fremdrift</h2><span class="small">I dag</span></div>
+      <div class="motivation-grid">
+        <article class="card focus-card">
+          <div class="focus-icon">🔥</div>
+          <div>
+            <p class="eyebrow">Streak</p>
+            <h2>${child.streak || 0} dager</h2>
+            <p class="muted">${streakMessage(child.streak || 0)}</p>
+          </div>
+        </article>
+        ${miniProgressCard("⭐", "Dagens oppdrag", stats.dailyDone, stats.dailyTotal, stats.dailyTotal ? `${Math.max(0, stats.dailyTotal - stats.dailyDone)} igjen i dag` : "Ingen faste oppdrag i dag")}
+        ${miniProgressCard("🏅", "Ukens oppdrag", stats.weeklyDone, stats.weeklyTotal, stats.weeklyTotal ? `${Math.max(0, stats.weeklyTotal - stats.weeklyDone)} igjen denne uken` : "Ingen ukesoppdrag akkurat nå")}
+      </div>
+    </section>
+    <section>
+      <div class="section-title"><h2>Neste merker</h2><span class="small">Nesten i mål</span></div>
+      <div class="badge-grid">
+        ${nextBadges.length ? nextBadges.map(nextBadgeCard).join("") : `<div class="empty">Alle merker er låst opp akkurat nå. Sterkt jobbet!</div>`}
+      </div>
+    </section>
     <section class="dashboard-grid">
       <article class="card">
         <h3>Stjerner</h3>
@@ -1050,23 +1073,119 @@ function childMeView(child) {
 
 function badgeGrid(childId) {
   const earned = earnedBadges(childId);
+  const progress = new Map(badgeProgressList(childId).map((item) => [item.badge.id, item]));
   return `
     <div class="badge-grid">
       ${BADGE_DEFINITIONS.map((badge) => {
         const childBadge = earned.find((item) => item.badgeId === badge.id);
+        const badgeProgress = progress.get(badge.id);
         return `
           <article class="badge-card ${childBadge ? "earned" : "locked"}">
             <div class="badge-icon">${childBadge ? badge.icon : "🔒"}</div>
             <div>
               <h3>${badge.name}</h3>
               <p class="muted">${badge.description}</p>
-              <p class="small">${childBadge ? `Fikk ${formatDate(childBadge.awardedAt)}` : "Ikke låst opp ennå"}</p>
+              <p class="small">${childBadge ? `Fikk ${formatDate(childBadge.awardedAt)}` : badgeProgress ? badgeProgress.hint : "Ikke låst opp ennå"}</p>
+              ${!childBadge && badgeProgress ? progressBar(badgeProgress.percent, `${badgeProgress.percent}% mot ${escapeAttr(badge.name)}`) : ""}
             </div>
           </article>
         `;
       }).join("")}
     </div>
   `;
+}
+
+function streakMessage(streak) {
+  if (streak >= 7) return "Du er på en skikkelig god rekke.";
+  if (streak >= 3) return "Tre eller flere dager på rad. Klarer du en dag til?";
+  if (streak >= 1) return "Bra start. Neste oppdrag holder rekken levende.";
+  return "Fullfør et oppdrag i dag for å starte en streak.";
+}
+
+function miniProgressCard(icon, title, done, total, hint) {
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  return `
+    <article class="card mini-progress-card">
+      <div class="mini-progress-head">
+        <span class="mini-icon">${icon}</span>
+        <div>
+          <h3>${title}</h3>
+          <p class="muted">${hint}</p>
+        </div>
+      </div>
+      <div class="mini-progress-row">
+        <strong>${done}/${total}</strong>
+        <span>${percent}%</span>
+      </div>
+      ${progressBar(percent, `${percent}% fullført`)}
+    </article>
+  `;
+}
+
+function nextBadgeCard(item) {
+  return `
+    <article class="badge-card next-badge-card">
+      <div class="badge-icon">${item.badge.icon}</div>
+      <div>
+        <h3>${item.badge.name}</h3>
+        <p class="muted">${item.badge.description}</p>
+        <p class="small">${item.hint}</p>
+        ${progressBar(item.percent, `${item.percent}% mot ${escapeAttr(item.badge.name)}`)}
+      </div>
+    </article>
+  `;
+}
+
+function progressBar(percent, label) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  return `<div class="progress mini-progress" aria-label="${label}"><span style="width:${safePercent}%"></span></div>`;
+}
+
+function badgeProgressList(childId) {
+  const earned = new Set(earnedBadges(childId).map((item) => item.badgeId));
+  return BADGE_DEFINITIONS
+    .filter((badge) => !earned.has(badge.id))
+    .map((badge) => badgeProgress(childId, badge))
+    .sort((a, b) => b.percent - a.percent || a.missing - b.missing || a.badge.name.localeCompare(b.badge.name, "no"));
+}
+
+function badgeProgress(childId, badge) {
+  const completed = completedTaskCount(childId);
+  const bonus = completedBonusCount(childId);
+  const morning = categoryProgressToday(childId, "Morgen");
+  const evening = categoryProgressToday(childId, "Kveld");
+  const rewardDone = state.redemptions.some((item) => item.childId === childId && ["approved", "fulfilled"].includes(item.status));
+  const progressByBadge = {
+    "first-task": goalProgress(completed, 1, "Fullfør ett oppdrag for å låse opp."),
+    "task-10": goalProgress(completed, 10, `${Math.max(0, 10 - completed)} oppdrag igjen.`),
+    "task-50": goalProgress(completed, 50, `${Math.max(0, 50 - completed)} oppdrag igjen.`),
+    "morning-master": goalProgress(morning.done, morning.total, morning.total ? `${Math.max(0, morning.total - morning.done)} morgenoppdrag igjen i dag.` : "Ingen morgenoppdrag i dag."),
+    "evening-hero": goalProgress(evening.done, evening.total, evening.total ? `${Math.max(0, evening.total - evening.done)} kveldsoppdrag igjen i dag.` : "Ingen kveldsoppdrag i dag."),
+    "bonus-star": goalProgress(bonus, 1, "Fullfør ett ekstraoppdrag."),
+    "reward-picker": goalProgress(rewardDone ? 1 : 0, 1, "Be om en belønning og få den godkjent.")
+  };
+  return {
+    badge,
+    ...(progressByBadge[badge.id] || goalProgress(0, 1, "Fortsett å samle oppdrag."))
+  };
+}
+
+function goalProgress(done, total, hint) {
+  const safeTotal = Math.max(1, Number(total) || 1);
+  const safeDone = Math.max(0, Math.min(safeTotal, Number(done) || 0));
+  return {
+    done: safeDone,
+    total: safeTotal,
+    missing: Math.max(0, safeTotal - safeDone),
+    percent: Math.round((safeDone / safeTotal) * 100),
+    hint
+  };
+}
+
+function categoryProgressToday(childId, category) {
+  const tasks = childPeriodTasks(childId, "daily").filter((item) => item.task.category === category);
+  const done = tasks.filter((item) => ["completed", "approved"].includes(item.status)).length;
+  return { done, total: tasks.length };
 }
 
 function childRewardHistoryList(items) {
