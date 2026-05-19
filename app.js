@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "63";
+const APP_VERSION = "66";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -81,9 +81,9 @@ const BADGE_DEFINITIONS = [
 ];
 
 const childrenSeed = [
-  { id: "sofia", name: "Sofia", avatar: "🌟", color: "#8B5CF6", pointsBalance: 0, lifetimePoints: 0, streak: 0, active: true },
-  { id: "finn", name: "Finn", avatar: "🚀", color: "#00A8B5", pointsBalance: 0, lifetimePoints: 0, streak: 0, active: true },
-  { id: "ellie", name: "Ellie", avatar: "🌈", color: "#F472B6", pointsBalance: 0, lifetimePoints: 0, streak: 0, active: true }
+  { id: "sofia", name: "Sofia", avatar: "🌟", color: "#8B5CF6", pointsBalance: 0, lifetimePoints: 0, streak: 0, bestStreak: 0, lastStreakDate: null, active: true },
+  { id: "finn", name: "Finn", avatar: "🚀", color: "#00A8B5", pointsBalance: 0, lifetimePoints: 0, streak: 0, bestStreak: 0, lastStreakDate: null, active: true },
+  { id: "ellie", name: "Ellie", avatar: "🌈", color: "#F472B6", pointsBalance: 0, lifetimePoints: 0, streak: 0, bestStreak: 0, lastStreakDate: null, active: true }
 ];
 
 const allChildren = childrenSeed.map((child) => child.id);
@@ -215,6 +215,7 @@ let view = {
   setupStep: 0,
   setupDraft: null,
   avatarPickerChildId: null,
+  badgeCelebration: null,
   gate: null,
   scrollTopPending: true
 };
@@ -321,6 +322,8 @@ function normalizeChildren(children) {
     pointsBalance: Number(child.pointsBalance) || 0,
     lifetimePoints: Number(child.lifetimePoints) || 0,
     streak: Number(child.streak) || 0,
+    bestStreak: Number(child.bestStreak) || Number(child.streak) || 0,
+    lastStreakDate: child.lastStreakDate || null,
     active: child.active !== false
   }));
 }
@@ -436,7 +439,14 @@ function render() {
   } else {
     renderHome();
   }
+  renderGlobalOverlays();
   scrollToTopIfNeeded();
+}
+
+function renderGlobalOverlays() {
+  if (view.badgeCelebration) {
+    app.insertAdjacentHTML("beforeend", badgeCelebrationModal(view.badgeCelebration));
+  }
 }
 
 function renderLoading() {
@@ -837,6 +847,23 @@ function avatarPickerModal(child) {
   `;
 }
 
+function badgeCelebrationModal(badge) {
+  return `
+    <div class="modal-backdrop badge-celebration-backdrop">
+      <div class="modal badge-celebration-modal" role="dialog" aria-modal="true" aria-labelledby="badge-celebration-title">
+        <div class="badge-celebration-icon">${badge.icon}</div>
+        <p class="eyebrow">Nytt merke</p>
+        <h2 id="badge-celebration-title">${escapeText(badge.name)}</h2>
+        <p class="muted">${escapeText(badge.description)}</p>
+        <div class="badge-celebration-actions">
+          <button class="btn" data-action="view-my-badges">Se merkene mine</button>
+          <button class="btn secondary" data-action="close-badge-celebration">Fortsett</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function childTaskView(child) {
   const daily = childPeriodTasks(child.id, "daily").filter((item) => item.task.category !== "Bonus");
   const weekly = childPeriodTasks(child.id, "weekly");
@@ -845,9 +872,35 @@ function childTaskView(child) {
     ...childPeriodTasks(child.id, "once")
   ].sort((a, b) => a.task.sortOrder - b.task.sortOrder);
   return `
+    ${weeklyGoalCard(child)}
     ${groupedTaskSection("Dagens oppdrag", daily, child.id)}
     ${taskSection("Ukens oppdrag", weekly, child.id)}
     ${taskSection("Ekstraoppdrag", bonus, child.id)}
+  `;
+}
+
+function weeklyGoalCard(child) {
+  const progress = weeklyGoalProgress(child.id);
+  return `
+    <section>
+      <article class="weekly-goal-card">
+        <div class="weekly-goal-main">
+          <div class="weekly-goal-icon">🎯</div>
+          <div>
+            <p class="eyebrow">Ukens mål</p>
+            <h2>${progress.done} av ${progress.target} oppdrag</h2>
+            <p>${progress.done >= progress.target ? "Målet er nådd. Neste mål er allerede klart." : `${progress.missing} oppdrag igjen til neste ukemål.`}</p>
+          </div>
+        </div>
+        <div class="weekly-goal-progress">
+          <div class="weekly-goal-row">
+            <span>${progress.percent}%</span>
+            <strong>${progress.badgeText}</strong>
+          </div>
+          ${progressBar(progress.percent, `${progress.percent}% av ukens mål`)}
+        </div>
+      </article>
+    </section>
   `;
 }
 
@@ -1027,6 +1080,7 @@ function childMeView(child) {
             <p class="eyebrow">Streak</p>
             <h2>${child.streak || 0} dager</h2>
             <p class="muted">${streakMessage(child.streak || 0)}</p>
+            <p class="small">Beste streak: ${child.bestStreak || child.streak || 0} dager</p>
           </div>
         </article>
         ${miniProgressCard("⭐", "Dagens oppdrag", stats.dailyDone, stats.dailyTotal, stats.dailyTotal ? `${Math.max(0, stats.dailyTotal - stats.dailyDone)} igjen i dag` : "Ingen faste oppdrag i dag")}
@@ -2317,8 +2371,9 @@ function completeTask(childId, taskId) {
     addHistory(childId, "Oppgave sendt til godkjenning", `${task.title} venter på voksen`, 0);
     showToast("Sendt til voksen for godkjenning.");
   } else {
+    const streakResult = updateChildStreak(childId, completion.date);
     const result = awardPoints(childId, task.points, `Fullført: ${task.title}`, completion.id, "task");
-    celebrateTaskResult(task.points, result);
+    celebrateTaskResult(task.points, result, { childId, task, streakResult });
   }
   saveState();
   render();
@@ -2331,6 +2386,7 @@ function approveTask(id) {
   completion.status = "approved";
   completion.approvedAt = new Date().toISOString();
   completion.pointsAwarded = task.points;
+  updateChildStreak(completion.childId, completion.date);
   awardPoints(completion.childId, task.points, `Godkjent: ${task.title}`, id, "task");
   saveState();
   showToast("Oppgave godkjent.");
@@ -2714,6 +2770,8 @@ async function completeFirstSetup(form) {
       pointsBalance: 0,
       lifetimePoints: 0,
       streak: 0,
+      bestStreak: 0,
+      lastStreakDate: null,
       active: true
     })),
     tasks: [],
@@ -2841,6 +2899,8 @@ function saveChild(form) {
       pointsBalance: 0,
       lifetimePoints: 0,
       streak: 0,
+      bestStreak: 0,
+      lastStreakDate: null,
       active: data.get("active") === "yes"
     };
     state.children.push(child);
@@ -3163,6 +3223,64 @@ function awardBadges(childId, awardedAt = new Date().toISOString()) {
 
 function completedTaskCount(childId) {
   return state.completions.filter((item) => item.childId === childId && ["completed", "approved"].includes(item.status)).length;
+}
+
+function completedTaskCountThisWeek(childId) {
+  const currentWeek = weekId();
+  return state.completions.filter((item) =>
+    item.childId === childId &&
+    ["completed", "approved"].includes(item.status) &&
+    (item.weekId || weekId(new Date(item.completedAt || item.approvedAt || Date.now()))) === currentWeek
+  ).length;
+}
+
+function weeklyGoalProgress(childId) {
+  const done = completedTaskCountThisWeek(childId);
+  const target = Math.max(10, done > 0 && done % 10 === 0 ? done : Math.ceil(Math.max(1, done + 1) / 10) * 10);
+  return {
+    done,
+    target,
+    missing: Math.max(0, target - done),
+    percent: Math.min(100, Math.round((done / target) * 100)),
+    badgeText: target <= 10 ? "Første ukemål" : `Neste: ${target} oppdrag`
+  };
+}
+
+function updateChildStreak(childId, completionDate = dateKey()) {
+  const child = getChild(childId);
+  if (!child) return { current: 0, previous: 0, increased: false, best: 0, newBest: false };
+  const previous = Number(child.streak) || 0;
+  const current = calculateTaskStreak(childId, completionDate);
+  const previousBest = Number(child.bestStreak) || previous;
+  child.streak = current;
+  child.bestStreak = Math.max(previousBest, current);
+  child.lastStreakDate = completionDate;
+  return {
+    current,
+    previous,
+    increased: current > previous,
+    best: child.bestStreak,
+    newBest: current > previousBest
+  };
+}
+
+function calculateTaskStreak(childId, endDate = dateKey()) {
+  const dates = new Set(state.completions
+    .filter((item) => item.childId === childId && ["completed", "approved"].includes(item.status))
+    .map((item) => item.date || dateKey(new Date(item.completedAt || item.approvedAt || Date.now()))));
+  let streak = 0;
+  let cursor = endDate;
+  while (dates.has(cursor)) {
+    streak += 1;
+    cursor = previousDateKey(cursor);
+  }
+  return streak;
+}
+
+function previousDateKey(value) {
+  const date = new Date(`${value}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return dateKey(date);
 }
 
 function completedBonusCount(childId) {
@@ -3885,10 +4003,29 @@ function restorePreviousView() {
 }
 
 function showToast(message) {
+  toast.classList.remove("motivation-toast");
   toast.textContent = message;
   toast.classList.add("show");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2600);
+}
+
+function showMotivationToast({ icon = "⭐", title, text, meta = [] }) {
+  toast.classList.add("motivation-toast");
+  toast.innerHTML = `
+    <div class="motivation-toast-icon">${icon}</div>
+    <div>
+      <strong>${escapeText(title)}</strong>
+      <p>${escapeText(text)}</p>
+      ${meta.length ? `<div class="motivation-toast-meta">${meta.map((item) => `<span>${escapeText(item)}</span>`).join("")}</div>` : ""}
+    </div>
+  `;
+  toast.classList.add("show");
+  window.clearTimeout(showToast.timer);
+  showToast.timer = window.setTimeout(() => {
+    toast.classList.remove("show");
+    toast.classList.remove("motivation-toast");
+  }, 4200);
 }
 
 function celebrate(points) {
@@ -3901,9 +4038,13 @@ function celebrate(points) {
   window.setTimeout(() => layer.remove(), 1200);
 }
 
-function celebrateTaskResult(points, result = {}) {
+function celebrateTaskResult(points, result = {}, context = {}) {
   if (result.levelUp) {
     celebrateLevelUp(result.levelNumber, result.level.name);
+    if (result.badges?.length) {
+      const badge = BADGE_DEFINITIONS.find((item) => item.id === result.badges[0].badgeId);
+      prepareBadgeCelebration(badge);
+    }
     return;
   }
   if (result.badges?.length) {
@@ -3911,28 +4052,68 @@ function celebrateTaskResult(points, result = {}) {
     celebrateBadge(badge);
     return;
   }
-  celebrate(points);
+  celebrateMotivation(points, context);
+}
+
+function celebrateMotivation(points, context = {}) {
+  const nextBadge = context.childId ? badgeProgressList(context.childId).at(0) : null;
+  const streak = context.streakResult;
+  const weeklyGoal = context.childId ? weeklyGoalProgress(context.childId) : null;
+  const meta = [`+${points} stjerner`];
+  if (streak?.increased && streak.current > 1) meta.push(`${streak.current} dager på rad`);
+  if (streak?.newBest && streak.current > 1) meta.push("Ny streak-rekord");
+  if (weeklyGoal?.done === weeklyGoal?.target) meta.push("Ukens mål nådd");
+  if (nextBadge && nextBadge.percent >= 50) meta.push(`${nextBadge.percent}% mot ${nextBadge.badge.name}`);
+  showMotivationToast({
+    icon: weeklyGoal?.done === weeklyGoal?.target ? "🎯" : streak?.increased && streak.current > 1 ? "🔥" : "⭐",
+    title: weeklyGoal?.done === weeklyGoal?.target ? "Ukens mål er nådd!" : streak?.increased && streak.current > 1 ? `${streak.current} dager på rad!` : "Bra jobbet!",
+    text: weeklyGoal?.done === weeklyGoal?.target ? "Neste ukemål er klart." : nextBadge ? nextBadge.hint : "Du er litt nærmere neste merke.",
+    meta
+  });
+  if (navigator.vibrate) navigator.vibrate(60);
+  dropConfetti("⭐", 18, 1200);
 }
 
 function celebrateLevelUp(levelNumber, levelName) {
-  showToast(`Nytt nivå! Nivå ${levelNumber}: ${levelName}`);
+  showMotivationToast({
+    icon: "🏆",
+    title: "Nytt nivå!",
+    text: `Nivå ${levelNumber}: ${levelName}`,
+    meta: ["Nivå opp"]
+  });
   if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
-  const layer = document.createElement("div");
-  layer.className = "confetti level-confetti";
-  layer.innerHTML = Array.from({ length: 28 }, (_, index) => `<span style="left:${Math.random() * 100}%;animation-delay:${index * 18}ms">🏆</span>`).join("");
-  document.body.append(layer);
-  window.setTimeout(() => layer.remove(), 1500);
+  dropConfetti("🏆", 28, 1500, "level-confetti");
 }
 
 function celebrateBadge(badge) {
   if (!badge) return celebrate(0);
-  showToast(`Nytt merke: ${badge.icon} ${badge.name}`);
+  prepareBadgeCelebration(badge);
+  showMotivationToast({
+    icon: badge.icon,
+    title: "Nytt merke!",
+    text: badge.name,
+    meta: [badge.description]
+  });
   if (navigator.vibrate) navigator.vibrate(70);
+  dropConfetti(badge.icon, 22, 1300, "badge-confetti");
+}
+
+function prepareBadgeCelebration(badge) {
+  if (!badge) return;
+  view.badgeCelebration = {
+    id: badge.id,
+    icon: badge.icon,
+    name: badge.name,
+    description: badge.description
+  };
+}
+
+function dropConfetti(icon, count, duration, className = "") {
   const layer = document.createElement("div");
-  layer.className = "confetti badge-confetti";
-  layer.innerHTML = Array.from({ length: 22 }, (_, index) => `<span style="left:${Math.random() * 100}%;animation-delay:${index * 20}ms">${badge.icon}</span>`).join("");
+  layer.className = `confetti ${className}`.trim();
+  layer.innerHTML = Array.from({ length: count }, (_, index) => `<span style="left:${Math.random() * 100}%;animation-delay:${index * 20}ms">${icon}</span>`).join("");
   document.body.append(layer);
-  window.setTimeout(() => layer.remove(), 1300);
+  window.setTimeout(() => layer.remove(), duration);
 }
 
 function escapeAttr(value) {
@@ -4045,6 +4226,18 @@ app.addEventListener("click", (event) => {
   }
   if (action === "close-avatar-picker") {
     view.avatarPickerChildId = null;
+    render();
+  }
+  if (action === "close-badge-celebration") {
+    view.badgeCelebration = null;
+    render();
+  }
+  if (action === "view-my-badges") {
+    view.badgeCelebration = null;
+    if (view.mode === "child" && view.childId) {
+      view.childTab = "me";
+      queueScrollTop();
+    }
     render();
   }
   if (action === "choose-avatar") {
