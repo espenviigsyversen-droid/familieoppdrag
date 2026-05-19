@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "59";
+const APP_VERSION = "60";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -1098,6 +1098,7 @@ function renderAdult() {
       </div>
       <div class="actions">
         <span class="sync-pill ${cloudStatusClass()}">${cloudStatusLabel()}</span>
+        <span class="sync-pill ${currentRoleClass()}">${currentRoleLabel()}</span>
         <button class="btn secondary" data-action="set-device-adult">📌 Standard</button>
         <button class="btn secondary" data-action="home">🏠</button>
         <button class="btn danger" data-action="lock-adult">Lås</button>
@@ -1575,6 +1576,7 @@ function adultShare() {
   const adultInvite = activeInvites("adult")[0];
   const adultLink = adultInvite ? adultInviteLinkFor(adultInvite) : "";
   const ownerReady = familyHasGoogleOwner();
+  const ownerAccess = hasOwnerAccess();
   const readiness = shareReadinessItems(adultInvite);
   return `
     <section>
@@ -1619,9 +1621,10 @@ function adultShare() {
           </div>
           <div class="actions">
             <button class="btn" data-action="copy-family-link">Kopier lenke</button>
-            <button class="btn secondary" data-action="new-family-code">Lag ny familiekode</button>
+            <button class="btn secondary" data-action="new-family-code" ${ownerAccess ? "" : "disabled"}>Lag ny familiekode</button>
           </div>
           <p class="small">Denne lenken gir ikke tilgang til voksenpanelet alene. På enheten velger dere profilvelger, et barn eller voksenoversikt som standard.</p>
+          ${ownerAccess ? "" : `<p class="small">Bare Google-eier kan lage ny familiekode.</p>`}
         </article>
 
         <article class="panel share-card">
@@ -1640,9 +1643,9 @@ function adultShare() {
               <span class="pill">${adultInvite ? escapeText(inviteExpiryLabel(adultInvite)) : `Gyldig i ${ADULT_INVITE_LIFETIME_DAYS} dager`}</span>
             </div>
             <div class="actions">
-              <button class="btn" data-action="copy-adult-invite">Kopier vokseninvitasjon</button>
-              <button class="btn secondary" data-action="new-adult-invite">Lag ny vokseninvitasjon</button>
-              ${adultInvite ? `<button class="btn danger" data-action="revoke-adult-invite">Deaktiver</button>` : ""}
+              <button class="btn" data-action="copy-adult-invite" ${ownerAccess ? "" : "disabled"}>Kopier vokseninvitasjon</button>
+              <button class="btn secondary" data-action="new-adult-invite" ${ownerAccess ? "" : "disabled"}>Lag ny vokseninvitasjon</button>
+              ${adultInvite ? `<button class="btn danger" data-action="revoke-adult-invite" ${ownerAccess ? "" : "disabled"}>Deaktiver</button>` : ""}
             </div>
           ` : `
             <div class="auth-status-card pending">
@@ -1654,6 +1657,7 @@ function adultShare() {
             </div>
           `}
           <p class="small">Vokseninvitasjonen er separat fra familiekoden. Den som åpner lenken må logge inn med Google før voksenrollen legges til.</p>
+          ${ownerAccess ? "" : `<p class="small">Bare Google-eier kan lage, kopiere eller deaktivere vokseninvitasjoner.</p>`}
         </article>
       </div>
 
@@ -1669,6 +1673,7 @@ function adultShare() {
           <div><strong>Familie-id</strong><span>${escapeText(state.familyId || "-")}</span></div>
           <div><strong>Sky-sti</strong><span>${escapeText(cloudPathLabel())}</span></div>
           <div><strong>Google-eier</strong><span>${escapeText(googleOwnerLabel())}</span></div>
+          <div><strong>Denne økten</strong><span>${escapeText(currentRoleLabel())}</span></div>
           <div><strong>Voksne</strong><span>${activeAdultUsers().length}</span></div>
           <div><strong>Enhetskode</strong><span>${escapeText(state.familyCode || "-")}</span></div>
         </div>
@@ -1797,6 +1802,7 @@ function settingsMenu() {
 
 function settingsFamily() {
   const adults = activeAdultUsers();
+  const ownerAccess = hasOwnerAccess();
   return `
     <section class="panel">
       <div class="section-title compact-title">
@@ -1810,7 +1816,8 @@ function settingsFamily() {
         ${field("familyName", "Familienavn", state.familyName || "", "text")}
         <div class="field">
           <label>Intern familie-id</label>
-          <input name="familyId" type="text" value="${escapeAttr(state.familyId || "local-family")}" required>
+          <input name="familyId" type="text" value="${escapeAttr(state.familyId || "local-family")}" ${ownerAccess ? "" : "readonly"} required>
+          <small>${ownerAccess ? "Endring av familie-id påvirker sky-stien." : "Bare Google-eier kan endre familie-id."}</small>
         </div>
         <div class="field">
           <label>Familiekode</label>
@@ -2608,6 +2615,7 @@ function saveFamilySettings(form) {
   const familyId = slugify(data.get("familyId") || "") || "local-family";
   if (!familyName) return showToast("Familien må ha et navn.");
   const previousFamilyId = state.familyId;
+  if (familyId !== previousFamilyId && !requireOwnerAccess("Bare Google-eier kan endre familie-id.")) return;
   state.familyName = familyName;
   state.familyId = familyId;
   state.familyCode = state.familyCode || createFamilyCode();
@@ -3169,6 +3177,38 @@ function firebaseProjectLabel() {
 
 function activeAdultUsers() {
   return (state.adultUsers || []).filter((user) => user.status !== "removed");
+}
+
+function currentAdultUser() {
+  const uid = cloud.authUser?.uid;
+  if (!uid) return null;
+  return activeAdultUsers().find((user) => user.uid === uid) || null;
+}
+
+function hasOwnerAccess() {
+  const uid = cloud.authUser?.uid;
+  return Boolean(uid && state.ownerUid === uid && familyOwner()?.uid === uid);
+}
+
+function currentRoleLabel() {
+  if (hasOwnerAccess()) return "Du er eier";
+  const adult = currentAdultUser();
+  if (adult) return "Du er voksen";
+  if (cloud.authUser?.isAnonymous) return "Anonym enhet";
+  if (cloud.authUser) return "Google-bruker uten rolle";
+  return "PIN-åpnet enhet";
+}
+
+function currentRoleClass() {
+  if (hasOwnerAccess()) return "done";
+  if (currentAdultUser()) return "pending";
+  return "rejected";
+}
+
+function requireOwnerAccess(message = "Bare Google-eier kan gjøre dette.") {
+  if (hasOwnerAccess()) return true;
+  showToast(message);
+  return false;
 }
 
 function activeInvites(type) {
@@ -3965,6 +4005,7 @@ app.addEventListener("click", (event) => {
     flushCloudSave();
   }
   if (action === "migrate-cloud-family") {
+    if (!requireOwnerAccess("Bare Google-eier kan flytte sky-sti.")) return;
     migrateCloudFamilyPath();
   }
   if (action === "test-cloud-sync") {
@@ -3984,15 +4025,19 @@ app.addEventListener("click", (event) => {
     copyFamilyLink();
   }
   if (action === "copy-adult-invite") {
+    if (!requireOwnerAccess("Bare Google-eier kan kopiere vokseninvitasjon.")) return;
     copyAdultInviteLink();
   }
   if (action === "new-adult-invite" && confirm("Vil du lage en ny vokseninvitasjon? Gamle vokseninvitasjoner blir deaktivert.")) {
+    if (!requireOwnerAccess("Bare Google-eier kan lage vokseninvitasjon.")) return;
     createNewAdultInvite();
   }
   if (action === "revoke-adult-invite" && confirm("Vil du deaktivere aktiv vokseninvitasjon? Lenken slutter å gi voksen-tilgang.")) {
+    if (!requireOwnerAccess("Bare Google-eier kan deaktivere vokseninvitasjon.")) return;
     revokeAdultInvite();
   }
   if (action === "new-family-code" && confirm("Vil du lage en ny familiekode? Gamle koblingslenker vil slutte å passe.")) {
+    if (!requireOwnerAccess("Bare Google-eier kan lage ny familiekode.")) return;
     state.familyCode = createFamilyCode();
     state.inviteCodes = (state.inviteCodes || []).map((invite) =>
       invite.type === "device" ? { ...invite, status: "revoked" } : invite
