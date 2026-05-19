@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "58";
+const APP_VERSION = "59";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -2047,11 +2047,23 @@ function settingsReset() {
       <div class="section-title compact-title">
         <div>
           <h2>Nullstilling</h2>
-          <p class="muted">Sletter appdata og starter førstegangsoppsettet på nytt.</p>
+          <p class="muted">Starter denne enheten på nytt uten å slette familien i skyen.</p>
         </div>
         ${settingsBackButton()}
       </div>
-      <button class="btn warning" data-action="seed-demo">Nullstill til startdata</button>
+      <div class="setup-note">
+        Dette fjerner lokal familieprofil, standardprofil og mellomlagrede data på denne enheten. Andre enheter i familien og familiens Firestore-data blir ikke slettet.
+      </div>
+      <form data-form="start-over-local" class="form-grid" style="margin-top:18px">
+        <div class="field">
+          <label>Voksen-PIN</label>
+          <input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required>
+          <small>PIN kreves for å starte førstegangsoppsettet på nytt.</small>
+        </div>
+        <div class="actions" style="align-self:end">
+          <button class="btn warning" type="submit">Start på nytt på denne enheten</button>
+        </div>
+      </form>
     </section>
   `;
 }
@@ -3596,6 +3608,52 @@ function revokeAdultInvite() {
   render();
 }
 
+async function startOverLocal(form) {
+  const data = new FormData(form);
+  const hash = await hashPin(data.get("pin"));
+  if (hash !== state.parentPinHash) {
+    showToast("Feil PIN.");
+    return;
+  }
+  const ok = confirm("Vil du starte på nytt på denne enheten? Familien i skyen slettes ikke, men lokal appdata på denne enheten fjernes.");
+  if (!ok) return;
+
+  window.clearTimeout(cloud.saveTimer);
+  cloud.pendingSave = false;
+  cloud.applyingRemote = false;
+  if (cloud.unsubscribe) {
+    cloud.unsubscribe();
+    cloud.unsubscribe = null;
+  }
+
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(DEVICE_PROFILE_KEY);
+  if ("caches" in window) {
+    await caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))).catch(() => {});
+  }
+
+  state = loadState();
+  view.mode = "home";
+  view.childId = null;
+  view.childTab = "tasks";
+  view.adultTab = "overview";
+  view.adultUnlocked = false;
+  view.editingTaskId = null;
+  view.editingRewardId = null;
+  view.editingChildId = null;
+  view.settingsPage = "menu";
+  view.creatingTask = false;
+  view.creatingReward = false;
+  view.creatingChild = false;
+  view.setupStep = 0;
+  view.setupDraft = null;
+  view.avatarPickerChildId = null;
+  view.gate = null;
+  queueScrollTop();
+  showToast("Denne enheten er klar for nytt oppsett.");
+  render();
+}
+
 function connectDevice(profile) {
   if (!profile) return;
   if (profile.startsWith("child:")) {
@@ -3949,20 +4007,6 @@ app.addEventListener("click", (event) => {
     showToast("Nivåer er tilbakestilt.");
     render();
   }
-  if (action === "seed-demo") {
-    const typed = prompt('Skriv "Nullstill" for å låse opp nullstilling.');
-    if (typed !== "Nullstill") {
-      showToast("Nullstilling ble avbrutt.");
-      return;
-    }
-    if (confirm("Er du helt sikker på at du vil nullstille appen og starte førstegangsoppsettet på nytt? Dette kan ikke angres.")) {
-      localStorage.removeItem(STORAGE_KEY);
-      state = loadState();
-      saveState();
-      showToast("Appen er nullstilt.");
-      render();
-    }
-  }
   if (action === "export-data") {
     exportState();
   }
@@ -4043,6 +4087,10 @@ app.addEventListener("submit", async (event) => {
     form.reset();
     showToast("PIN-koden er endret.");
     render();
+  }
+  if (form.dataset.form === "start-over-local") {
+    await startOverLocal(form);
+    return;
   }
   if (form.dataset.form === "first-setup") {
     await completeFirstSetup(form);
