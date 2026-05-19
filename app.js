@@ -1,8 +1,9 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "53";
+const APP_VERSION = "58";
 const SCHEMA_VERSION = 2;
+const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
   environment: "production",
@@ -214,7 +215,8 @@ let view = {
   setupStep: 0,
   setupDraft: null,
   avatarPickerChildId: null,
-  gate: null
+  gate: null,
+  scrollTopPending: true
 };
 
 let previousView = { mode: view.mode, childId: view.childId, childTab: view.childTab };
@@ -355,7 +357,7 @@ function normalizeInviteCodes(invites, familyCode) {
     type: invite.type || "device",
     status: invite.status || "active",
     createdAt: invite.createdAt || new Date().toISOString(),
-    expiresAt: invite.expiresAt || null,
+    expiresAt: invite.expiresAt || (invite.type === "adult" ? adultInviteExpiresAt(invite.createdAt) : null),
     usedByUid: invite.usedByUid || null,
     usedAt: invite.usedAt || null
   }));
@@ -434,6 +436,7 @@ function render() {
   } else {
     renderHome();
   }
+  scrollToTopIfNeeded();
 }
 
 function renderLoading() {
@@ -540,7 +543,7 @@ function renderSetup() {
         ${setupStepContent(current.id)}
         <div class="actions setup-actions">
           ${step > 0 ? `<button class="btn secondary" type="button" data-action="setup-back">Tilbake</button>` : ""}
-          ${step < steps.length - 1 ? `<button class="btn" type="button" data-action="setup-next">Neste</button>` : `<button class="btn" type="submit">${preview ? "Avslutt forhåndsvisning" : "Start familien"}</button>`}
+          ${step < steps.length - 1 ? `<button class="btn" type="button" data-action="setup-next">Neste</button>` : `<button class="btn" type="submit">${preview ? "Avslutt forhåndsvisning" : "Start og åpne Deling"}</button>`}
         </div>
       </form>
     </section>
@@ -555,7 +558,7 @@ function setupSteps() {
     { id: "children", hero: "Barn", description: "Legg inn navn på barna. Du kan legge til, skjule og endre barn senere." },
     { id: "packages", hero: "Maler", description: "Velg startpakker med oppgaver og belønninger. Alt kan redigeres etterpå." },
     { id: "pin", hero: "PIN", description: "Sett en voksen-PIN som beskytter voksenpanelet på felles enheter." },
-    { id: "ready", hero: "Klar", description: "Se over valgene dine. Etterpå kan du invitere flere voksne og koble til barnas enheter." }
+    { id: "ready", hero: "Klar", description: "Se over valgene dine. Etterpå åpnes Deling, der du kan koble til barnas enheter eller invitere en voksen." }
   ];
 }
 
@@ -691,7 +694,8 @@ function setupStepContent(stepId) {
         <div><strong>Startpakker</strong><span>${draft.starterPackages.map((id) => STARTER_PACKAGES.find((pack) => pack.id === id)?.title).filter(Boolean).join(", ") || "Ingen"}</span></div>
         <div><strong>Google-eier</strong><span>${escapeText(googleOwnerLabel())}</span></div>
       </div>
-      <p class="muted">Etter oppstart kan du endre alt fra voksenpanelet under Innstillinger.</p>
+      <div class="setup-note">Når du starter familien, åpnes Deling-fanen. Der finner du lenke til barnas enheter, familiekode og vokseninvitasjon.</div>
+      <p class="muted">Etter oppstart kan du endre navn, barn, oppgaver, belønninger, PIN og startpakker fra voksenpanelet.</p>
     </div>
   `;
 }
@@ -1571,6 +1575,7 @@ function adultShare() {
   const adultInvite = activeInvites("adult")[0];
   const adultLink = adultInvite ? adultInviteLinkFor(adultInvite) : "";
   const ownerReady = familyHasGoogleOwner();
+  const readiness = shareReadinessItems(adultInvite);
   return `
     <section>
       <div class="section-title">
@@ -1579,6 +1584,25 @@ function adultShare() {
           <p class="muted">Send riktig lenke til riktig type enhet eller person.</p>
         </div>
       </div>
+      <section class="panel share-ready-panel">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Delingsklar-sjekk</h3>
+            <p class="muted">Rask kontroll før du sender lenker videre.</p>
+          </div>
+        </div>
+        <div class="share-checklist">
+          ${readiness.map((item) => `
+            <div class="share-check ${item.status}">
+              <span class="share-check-mark">${item.status === "done" ? "✓" : item.status === "rejected" ? "!" : "…"}</span>
+              <span>
+                <strong>${escapeText(item.title)}</strong>
+                <small>${escapeText(item.description)}</small>
+              </span>
+            </div>
+          `).join("")}
+        </div>
+      </section>
       <div class="share-grid">
         <article class="panel share-card">
           <div class="share-card-head">
@@ -1613,10 +1637,12 @@ function adultShare() {
             <div class="pill-row">
               <span class="pill ${adultInvite ? "done" : "pending"}">${adultInvite ? `Voksenkode: ${escapeText(adultInvite.code)}` : "Ingen aktiv kode"}</span>
               <span class="pill">Krever Google-innlogging</span>
+              <span class="pill">${adultInvite ? escapeText(inviteExpiryLabel(adultInvite)) : `Gyldig i ${ADULT_INVITE_LIFETIME_DAYS} dager`}</span>
             </div>
             <div class="actions">
               <button class="btn" data-action="copy-adult-invite">Kopier vokseninvitasjon</button>
               <button class="btn secondary" data-action="new-adult-invite">Lag ny vokseninvitasjon</button>
+              ${adultInvite ? `<button class="btn danger" data-action="revoke-adult-invite">Deaktiver</button>` : ""}
             </div>
           ` : `
             <div class="auth-status-card pending">
@@ -1649,6 +1675,40 @@ function adultShare() {
       </section>
     </section>
   `;
+}
+
+function shareReadinessItems(adultInvite) {
+  const hasChildren = activeChildren().length > 0;
+  const cloudOk = cloud.ready && !cloud.pendingSave && !cloud.error;
+  const cloudPending = cloud.ready && cloud.pendingSave;
+  const familyCodeOk = Boolean(state.familyCode);
+  return [
+    {
+      title: "Google-eier",
+      description: familyHasGoogleOwner() ? googleOwnerLabel() : "Logg inn med Google før familien deles med andre voksne.",
+      status: familyHasGoogleOwner() ? "done" : "rejected"
+    },
+    {
+      title: "Sky-synk",
+      description: cloudOk ? cloudStatusLabel() : cloudPending ? "Venter på lagring til sky." : cloud.error || "Sky-synk er ikke klar ennå.",
+      status: cloudOk ? "done" : cloudPending ? "pending" : "rejected"
+    },
+    {
+      title: "Familiekode",
+      description: familyCodeOk ? `Klar for barn og felles enheter: ${state.familyCode}` : "Mangler familiekode.",
+      status: familyCodeOk ? "done" : "rejected"
+    },
+    {
+      title: "Barneprofiler",
+      description: hasChildren ? `${activeChildren().length} aktive barn kan kobles til.` : "Legg til minst ett barn før appen deles til barneenheter.",
+      status: hasChildren ? "done" : "rejected"
+    },
+    {
+      title: "Vokseninvitasjon",
+      description: adultInvite ? inviteExpiryLabel(adultInvite) : "Valgfritt. Lag en vokseninvitasjon når en annen voksen skal få tilgang.",
+      status: adultInvite ? "done" : "pending"
+    }
+  ];
 }
 
 function childForm(child) {
@@ -1703,8 +1763,8 @@ function settingsBackButton() {
 
 function settingsMenu() {
   const items = [
-    ["family", "Familie og voksne", "Navn, Google-eier og datamodell"],
-    ["devices", "Enheter og kobling", "Koblingslenke, familiekode og standardprofiler"],
+    ["family", "Familie og voksne", "Navn, Google-eier og voksne"],
+    ["devices", "Denne enheten", "Velg hva appen åpner med her"],
     ["security", "PIN og sikkerhet", "Endre voksen-PIN"],
     ["backup", "Backup og flytting", "Eksporter, importer og flytt data"],
     ["starter", "Startpakker", "Legg inn standard oppgaver og belønninger"],
@@ -1737,13 +1797,12 @@ function settingsMenu() {
 
 function settingsFamily() {
   const adults = activeAdultUsers();
-  const adultInvites = activeInvites("adult");
   return `
     <section class="panel">
       <div class="section-title compact-title">
         <div>
           <h2>Familie</h2>
-          <p class="muted">Navn, intern id og datamodell.</p>
+          <p class="muted">Navn, intern id og voksne i familien.</p>
         </div>
         ${settingsBackButton()}
       </div>
@@ -1756,6 +1815,7 @@ function settingsFamily() {
         <div class="field">
           <label>Familiekode</label>
           <input name="familyCode" type="text" value="${escapeAttr(state.familyCode || "")}" readonly>
+          <small>Familiekode og invitasjonslenker styres fra fanen Deling.</small>
         </div>
         <div class="actions" style="align-self:end">
           <button class="btn" type="submit">Lagre familie</button>
@@ -1779,10 +1839,8 @@ function settingsFamily() {
           `).join("") : `<p class="small">Ingen voksne er lagt til ennå.</p>`}
         </div>
         <div class="actions" style="margin-top:14px">
-          <button class="btn secondary" type="button" data-action="copy-adult-invite">Kopier vokseninvitasjon</button>
-          <button class="btn secondary" type="button" data-action="new-adult-invite">Lag ny vokseninvitasjon</button>
+          <button class="btn secondary" type="button" data-action="adult-tab" data-tab="share">Åpne Deling</button>
         </div>
-        <p class="small">${adultInvites.length ? `Aktiv vokseninvitasjon: ${adultInvites[0].code}` : "Ingen aktiv vokseninvitasjon."}</p>
       </div>
       <p class="small">Datamodell: versjon ${state.schemaVersion || SCHEMA_VERSION}. Voksne: ${state.adultUsers?.length || 0}. Enheter: ${state.familyDevices?.length || 0}. Invitasjoner: ${state.inviteCodes?.length || 0}.</p>
     </section>
@@ -1794,21 +1852,40 @@ function settingsDevices() {
     <section class="panel">
       <div class="section-title compact-title">
         <div>
-          <h2>Enheter og kobling</h2>
-          <p class="muted">Bruk koblingslenken for felles iPad eller direkte barneprofil.</p>
+          <h2>Denne enheten</h2>
+          <p class="muted">Velg hva appen åpner med på akkurat denne skjermen.</p>
         </div>
         ${settingsBackButton()}
       </div>
       <div class="pill-row">
         <span class="pill">Standard: ${deviceProfileLabel()}</span>
-        <span class="pill">Kode: ${state.familyCode || "-"}</span>
       </div>
-      <div class="actions" style="margin-top:14px">
-        <button class="btn secondary" data-action="copy-family-link">Kopier koblingslenke</button>
-        <button class="btn secondary" data-action="new-family-code">Lag ny kode</button>
-        <button class="btn secondary" data-action="set-device-home">Bruk profilvalg som standard</button>
+      <div class="setup-options" style="margin-top:14px">
+        <button class="settings-tile" data-action="set-device-home">
+          <span>
+            <strong>Profilvalg</strong>
+            <small>Best for felles iPad eller skjerm i stua.</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+        <button class="settings-tile" data-action="set-device-adult">
+          <span>
+            <strong>Voksenoversikt</strong>
+            <small>Best for en voksen sin telefon eller PC.</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+        ${activeChildren().map((child) => `
+          <button class="settings-tile" data-action="set-device-child" data-child="${child.id}">
+            <span>
+              <strong>${child.avatar} ${escapeText(child.name)}</strong>
+              <small>Åpner rett i denne barneprofilen.</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
+        `).join("")}
       </div>
-      <p class="small">Koblingslenken velger standardprofil på enheten. Når Firebase-invitasjoner er klare, kan samme flyt koble nye enheter til riktig familie.</p>
+      <p class="small">Lenker, familiekode og vokseninvitasjoner ligger nå samlet i fanen Deling.</p>
     </section>
   `;
 }
@@ -2499,16 +2576,17 @@ async function completeFirstSetup(form) {
     addStarterPackage(packageId, activeChildIds());
   });
 
-  view.mode = "home";
+  view.mode = "adult";
   view.childId = null;
   view.childTab = "tasks";
-  view.adultTab = "overview";
-  view.adultUnlocked = false;
+  view.adultTab = "share";
+  view.adultUnlocked = true;
   view.setupStep = 0;
   view.setupDraft = null;
+  queueScrollTop();
   localStorage.setItem(DEVICE_PROFILE_KEY, "home");
   saveState();
-  showToast("Familien er satt opp.");
+  showToast("Familien er satt opp. Deling er klar.");
   render();
 }
 
@@ -3013,6 +3091,12 @@ function formatDate(value) {
   return new Intl.DateTimeFormat("no-NO", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
+function addDays(value, days) {
+  const date = new Date(value || Date.now());
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+
 async function hashPin(pin) {
   const encoded = new TextEncoder().encode(pin);
   const buffer = await crypto.subtle.digest("SHA-256", encoded);
@@ -3082,6 +3166,18 @@ function activeInvites(type) {
     if (!invite.expiresAt) return true;
     return new Date(invite.expiresAt).getTime() > now;
   });
+}
+
+function adultInviteExpiresAt(createdAt = new Date().toISOString()) {
+  return addDays(createdAt, ADULT_INVITE_LIFETIME_DAYS);
+}
+
+function inviteExpiryLabel(invite) {
+  if (!invite?.expiresAt) return "Utløper ikke";
+  const expires = new Date(invite.expiresAt).getTime();
+  if (!Number.isFinite(expires)) return "Ukjent utløp";
+  if (expires <= Date.now()) return `Utløpt ${formatDate(invite.expiresAt)}`;
+  return `Utløper ${formatDate(invite.expiresAt)}`;
 }
 
 function findActiveInvite(code, type) {
@@ -3366,6 +3462,20 @@ function setDeviceProfile(profile) {
   showToast("Standardprofil er lagret for denne enheten.");
 }
 
+function queueScrollTop() {
+  view.scrollTopPending = true;
+}
+
+function scrollToTopIfNeeded() {
+  if (!view.scrollTopPending) return;
+  view.scrollTopPending = false;
+  window.requestAnimationFrame(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  });
+}
+
 function pendingFamilyCode() {
   const params = new URLSearchParams(window.location.search);
   return params.get("familiekode") || params.get("join") || "";
@@ -3412,14 +3522,21 @@ function adultInviteLinkFor(invite) {
 function ensureAdultInvite() {
   if (!Array.isArray(state.inviteCodes)) state.inviteCodes = [];
   const existing = activeInvites("adult")[0];
-  if (existing) return existing;
+  if (existing) {
+    if (!existing.expiresAt) {
+      existing.expiresAt = adultInviteExpiresAt(existing.createdAt);
+      saveState();
+    }
+    return existing;
+  }
+  const createdAt = new Date().toISOString();
   const invite = {
     id: crypto.randomUUID(),
     code: createFamilyCode(),
     type: "adult",
     status: "active",
-    createdAt: new Date().toISOString(),
-    expiresAt: null,
+    createdAt,
+    expiresAt: adultInviteExpiresAt(createdAt),
     usedByUid: null,
     usedAt: null
   };
@@ -3453,18 +3570,29 @@ function createNewAdultInvite() {
   state.inviteCodes = state.inviteCodes.map((invite) =>
     invite.type === "adult" && invite.status === "active" ? { ...invite, status: "revoked" } : invite
   );
+  const createdAt = new Date().toISOString();
   state.inviteCodes.push({
     id: crypto.randomUUID(),
     code: createFamilyCode(),
     type: "adult",
     status: "active",
-    createdAt: new Date().toISOString(),
-    expiresAt: null,
+    createdAt,
+    expiresAt: adultInviteExpiresAt(createdAt),
     usedByUid: null,
     usedAt: null
   });
   saveState();
   showToast("Ny vokseninvitasjon er laget.");
+  render();
+}
+
+function revokeAdultInvite() {
+  if (!Array.isArray(state.inviteCodes)) state.inviteCodes = [];
+  state.inviteCodes = state.inviteCodes.map((invite) =>
+    invite.type === "adult" && invite.status === "active" ? { ...invite, status: "revoked" } : invite
+  );
+  saveState();
+  showToast("Vokseninvitasjonen er deaktivert.");
   render();
 }
 
@@ -3601,6 +3729,34 @@ app.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const { action, child, task, reward, id, tab } = button.dataset;
+  const scrollActions = new Set([
+    "home",
+    "setup-next",
+    "setup-back",
+    "cancel-connect",
+    "connect-device",
+    "cancel-gate",
+    "open-child",
+    "adult-login",
+    "cancel-adult-login",
+    "lock-adult",
+    "child-tab",
+    "adult-tab",
+    "new-task",
+    "edit-task",
+    "cancel-edit-task",
+    "new-reward",
+    "edit-reward",
+    "cancel-edit-reward",
+    "new-child",
+    "edit-child",
+    "cancel-edit-child",
+    "settings-page",
+    "set-device-child",
+    "set-device-adult",
+    "set-device-home"
+  ]);
+  if (scrollActions.has(action)) queueScrollTop();
 
   if (action === "home") {
     goHome();
@@ -3774,6 +3930,9 @@ app.addEventListener("click", (event) => {
   }
   if (action === "new-adult-invite" && confirm("Vil du lage en ny vokseninvitasjon? Gamle vokseninvitasjoner blir deaktivert.")) {
     createNewAdultInvite();
+  }
+  if (action === "revoke-adult-invite" && confirm("Vil du deaktivere aktiv vokseninvitasjon? Lenken slutter å gi voksen-tilgang.")) {
+    revokeAdultInvite();
   }
   if (action === "new-family-code" && confirm("Vil du lage en ny familiekode? Gamle koblingslenker vil slutte å passe.")) {
     state.familyCode = createFamilyCode();
@@ -4274,6 +4433,7 @@ async function startApp() {
   }
   validateStartupProfile();
   view.booting = false;
+  queueScrollTop();
   render();
 }
 

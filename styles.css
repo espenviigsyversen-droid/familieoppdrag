@@ -675,6 +675,62 @@ button:disabled {
   gap: 14px;
 }
 
+.share-ready-panel {
+  margin-bottom: 14px;
+}
+
+.share-checklist {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.share-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.share-check.done {
+  border-color: rgba(0, 194, 168, 0.3);
+  background: rgba(0, 194, 168, 0.07);
+}
+
+.share-check.pending {
+  border-color: rgba(255, 183, 3, 0.34);
+  background: rgba(255, 183, 3, 0.1);
+}
+
+.share-check.rejected {
+  border-color: rgba(239, 71, 111, 0.28);
+  background: rgba(239, 71, 111, 0.08);
+}
+
+.share-check-mark {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  font-weight: 900;
+}
+
+.share-check span:last-child {
+  display: grid;
+  gap: 4px;
+}
+
+.share-check small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .share-card {
   display: grid;
   align-content: start;
@@ -1248,6 +1304,7 @@ th {
   .profile-grid,
   .settings-menu,
   .share-grid,
+  .share-checklist,
   .share-status-grid,
   .dashboard-grid,
   .form-grid,
