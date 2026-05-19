@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "60";
+const APP_VERSION = "62";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -558,6 +558,7 @@ function setupSteps() {
     { id: "children", hero: "Barn", description: "Legg inn navn på barna. Du kan legge til, skjule og endre barn senere." },
     { id: "packages", hero: "Maler", description: "Velg startpakker med oppgaver og belønninger. Alt kan redigeres etterpå." },
     { id: "pin", hero: "PIN", description: "Sett en voksen-PIN som beskytter voksenpanelet på felles enheter." },
+    { id: "homescreen", hero: "Hjemskjerm", description: "Etter oppsettet bør appen lagres på hjemskjermen på barnas enheter og felles iPad/tablet." },
     { id: "ready", hero: "Klar", description: "Se over valgene dine. Etterpå åpnes Deling, der du kan koble til barnas enheter eller invitere en voksen." }
   ];
 }
@@ -682,6 +683,20 @@ function setupStepContent(stepId) {
             <input name="repeatPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" value="${escapeAttr(draft.repeatPin)}" required>
           </div>
         </div>
+      </div>
+    `;
+  }
+  if (stepId === "homescreen") {
+    return `
+      <div class="setup-block">
+        <h3>Husk dette etter oppsettet</h3>
+        <p class="muted">Ikke forlat oppstartsveilederen nå. Når familien er startet, åpnes Deling-fanen. Derfra kan du åpne familielenken på riktig enhet og lagre appen på hjemskjermen.</p>
+        <div class="setup-summary">
+          <div><strong>iPhone og iPad</strong><span>Etter oppsettet: åpne familielenken i Safari, trykk Del-knappen og velg Legg til på Hjem-skjerm.</span></div>
+          <div><strong>Android og Chrome</strong><span>Etter oppsettet: åpne familielenken i Chrome, trykk menyen og velg Installer app eller Legg til på startskjerm.</span></div>
+          <div><strong>PC og Mac</strong><span>Etter oppsettet: bruk Installer-ikonet i nettleseren når det vises, eller lag bokmerke hvis installering ikke tilbys.</span></div>
+        </div>
+        <div class="setup-note">Dette er en påminnelse, ikke et steg du må gjøre akkurat nå. Fullfør veilederen først.</div>
       </div>
     `;
   }
@@ -1624,6 +1639,9 @@ function adultShare() {
             <button class="btn secondary" data-action="new-family-code" ${ownerAccess ? "" : "disabled"}>Lag ny familiekode</button>
           </div>
           <p class="small">Denne lenken gir ikke tilgang til voksenpanelet alene. På enheten velger dere profilvelger, et barn eller voksenoversikt som standard.</p>
+          <div class="setup-note">
+            For best opplevelse: åpne lenken på barnets iPad/tablet eller felles enhet, velg startprofil, og legg appen på hjemskjermen etterpå.
+          </div>
           ${ownerAccess ? "" : `<p class="small">Bare Google-eier kan lage ny familiekode.</p>`}
         </article>
 
