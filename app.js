@@ -1,7 +1,7 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "52";
+const APP_VERSION = "53";
 const SCHEMA_VERSION = 2;
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -1100,7 +1100,7 @@ function renderAdult() {
       </div>
     </header>
     <nav class="tabs" aria-label="Voksenmeny">
-      ${["overview:Oversikt", "approvals:Godkjenninger", "tasks:Oppgaver", "rewards:Belønninger", "children:Barn", "history:Historikk", "settings:Innstillinger"].map((entry) => {
+      ${["overview:Oversikt", "approvals:Godkjenninger", "tasks:Oppgaver", "rewards:Belønninger", "children:Barn", "share:Deling", "history:Historikk", "settings:Innstillinger"].map((entry) => {
         const [id, label] = entry.split(":");
         return `<button class="tab ${view.adultTab === id ? "active" : ""}" data-action="adult-tab" data-tab="${id}">${label}</button>`;
       }).join("")}
@@ -1171,6 +1171,7 @@ function adultTabContent() {
   if (view.adultTab === "tasks") return adultTasks();
   if (view.adultTab === "rewards") return adultRewards();
   if (view.adultTab === "children") return adultChildren();
+  if (view.adultTab === "share") return adultShare();
   if (view.adultTab === "history") return adultHistory();
   if (view.adultTab === "settings") return adultSettings();
   return adultOverview();
@@ -1561,6 +1562,91 @@ function adultChildren() {
         </article>
       `).join("")}
       </div>
+    </section>
+  `;
+}
+
+function adultShare() {
+  const deviceLink = familyLink();
+  const adultInvite = activeInvites("adult")[0];
+  const adultLink = adultInvite ? adultInviteLinkFor(adultInvite) : "";
+  const ownerReady = familyHasGoogleOwner();
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Del familie</h2>
+          <p class="muted">Send riktig lenke til riktig type enhet eller person.</p>
+        </div>
+      </div>
+      <div class="share-grid">
+        <article class="panel share-card">
+          <div class="share-card-head">
+            <div class="share-icon">🏠</div>
+            <div>
+              <h3>Barn og felles enheter</h3>
+              <p class="muted">Bruk denne på barne-iPad, tablet, telefon eller felles skjerm hjemme.</p>
+            </div>
+          </div>
+          <div class="share-link-box">${escapeText(deviceLink)}</div>
+          <div class="pill-row">
+            <span class="pill">Familiekode: ${escapeText(state.familyCode || "-")}</span>
+            <span class="pill">Starter med profilvalg</span>
+          </div>
+          <div class="actions">
+            <button class="btn" data-action="copy-family-link">Kopier lenke</button>
+            <button class="btn secondary" data-action="new-family-code">Lag ny familiekode</button>
+          </div>
+          <p class="small">Denne lenken gir ikke tilgang til voksenpanelet alene. På enheten velger dere profilvelger, et barn eller voksenoversikt som standard.</p>
+        </article>
+
+        <article class="panel share-card">
+          <div class="share-card-head">
+            <div class="share-icon">🔐</div>
+            <div>
+              <h3>Ny voksen</h3>
+              <p class="muted">Bruk denne når en annen voksen skal få tilgang med sin egen Google-konto.</p>
+            </div>
+          </div>
+          ${ownerReady ? `
+            <div class="share-link-box">${adultLink ? escapeText(adultLink) : "Ingen aktiv vokseninvitasjon ennå."}</div>
+            <div class="pill-row">
+              <span class="pill ${adultInvite ? "done" : "pending"}">${adultInvite ? `Voksenkode: ${escapeText(adultInvite.code)}` : "Ingen aktiv kode"}</span>
+              <span class="pill">Krever Google-innlogging</span>
+            </div>
+            <div class="actions">
+              <button class="btn" data-action="copy-adult-invite">Kopier vokseninvitasjon</button>
+              <button class="btn secondary" data-action="new-adult-invite">Lag ny vokseninvitasjon</button>
+            </div>
+          ` : `
+            <div class="auth-status-card pending">
+              <div>
+                <strong>Google-eier mangler</strong>
+                <small>${googleOwnerLabel()}</small>
+              </div>
+              <button class="btn secondary" type="button" data-action="google-owner-login">Logg inn med Google</button>
+            </div>
+          `}
+          <p class="small">Vokseninvitasjonen er separat fra familiekoden. Den som åpner lenken må logge inn med Google før voksenrollen legges til.</p>
+        </article>
+      </div>
+
+      <section class="panel share-status-panel">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Status for deling</h3>
+            <p class="muted">Dette er nyttig å sjekke før du sender lenker videre.</p>
+          </div>
+        </div>
+        <div class="share-status-grid">
+          <div><strong>Familie</strong><span>${escapeText(state.familyName || "-")}</span></div>
+          <div><strong>Familie-id</strong><span>${escapeText(state.familyId || "-")}</span></div>
+          <div><strong>Sky-sti</strong><span>${escapeText(cloudPathLabel())}</span></div>
+          <div><strong>Google-eier</strong><span>${escapeText(googleOwnerLabel())}</span></div>
+          <div><strong>Voksne</strong><span>${activeAdultUsers().length}</span></div>
+          <div><strong>Enhetskode</strong><span>${escapeText(state.familyCode || "-")}</span></div>
+        </div>
+      </section>
     </section>
   `;
 }
@@ -3314,8 +3400,12 @@ function familyLink() {
 
 function adultInviteLink() {
   const invite = ensureAdultInvite();
+  return adultInviteLinkFor(invite);
+}
+
+function adultInviteLinkFor(invite) {
   const url = new URL(familyLink());
-  url.searchParams.set("voksenkode", invite.code);
+  url.searchParams.set("voksenkode", invite?.code || "");
   return url.toString();
 }
 
