@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "82";
+const APP_VERSION = "83";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -283,6 +283,7 @@ function loadState() {
     transactions: [],
     history: [],
     syncDiagnostics: null,
+    pilotShareText: "",
     levels: DEFAULT_LEVELS,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -315,6 +316,7 @@ function normalizeLocalState(savedState = {}, existingInstall = true) {
     badges: savedState.badges || [],
     syncDiagnostics: normalizeSyncDiagnostics(savedState.syncDiagnostics),
     cloudMigration: normalizeCloudMigration(savedState.cloudMigration),
+    pilotShareText: savedState.pilotShareText || "",
     levels: savedState.levels || DEFAULT_LEVELS,
     createdAt: savedState.createdAt || new Date().toISOString(),
     updatedAt: savedState.updatedAt || new Date().toISOString()
@@ -2551,7 +2553,7 @@ function settingsShareNewFamily() {
 }
 
 function settingsPilotShare() {
-  const text = pilotShareText();
+  const text = currentPilotShareText();
   return `
     <section>
       <div class="section-title">
@@ -2567,9 +2569,15 @@ function settingsPilotShare() {
             <h3>Pilotmelding</h3>
             <p class="muted">Teksten bruker startlenken for ny familie og forklarer første oppsett.</p>
           </div>
-          <button class="btn" data-action="copy-pilot-message">Kopier tekst</button>
+          <div class="actions">
+            <button class="btn" data-action="save-pilot-message">Lagre tekst</button>
+            <button class="btn secondary" data-action="copy-pilot-message">Kopier tekst</button>
+          </div>
         </div>
         <textarea class="copy-textarea" data-pilot-message>${escapeText(text)}</textarea>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn secondary" data-action="reset-pilot-message">Tilbakestill til standardtekst</button>
+        </div>
       </section>
       <section class="panel">
         <div class="section-title compact-title">
@@ -2589,7 +2597,11 @@ function settingsPilotShare() {
   `;
 }
 
-function pilotShareText() {
+function currentPilotShareText() {
+  return state.pilotShareText || defaultPilotShareText();
+}
+
+function defaultPilotShareText() {
   return [
     "Hei! Her er lenken til Familieoppdrag, slik at dere kan teste appen med deres egen familie:",
     "",
@@ -5009,13 +5021,27 @@ async function copyNewFamilyStartLink() {
 }
 
 async function copyPilotMessage() {
-  const text = document.querySelector("[data-pilot-message]")?.value || pilotShareText();
+  const text = document.querySelector("[data-pilot-message]")?.value || currentPilotShareText();
   try {
     await navigator.clipboard.writeText(text);
     showToast("Pilottekst kopiert.");
   } catch {
     prompt("Kopier pilotteksten:", text);
   }
+}
+
+function savePilotMessage() {
+  state.pilotShareText = document.querySelector("[data-pilot-message]")?.value || "";
+  saveState();
+  showToast("Pilottekst er lagret.");
+}
+
+function resetPilotMessage() {
+  if (!confirm("Vil du tilbakestille pilotteksten til standardmalen?")) return;
+  state.pilotShareText = "";
+  saveState();
+  showToast("Pilottekst er tilbakestilt.");
+  render();
 }
 
 async function copyAdultInviteLink() {
@@ -5564,6 +5590,12 @@ app.addEventListener("click", (event) => {
   }
   if (action === "copy-pilot-message") {
     copyPilotMessage();
+  }
+  if (action === "save-pilot-message") {
+    savePilotMessage();
+  }
+  if (action === "reset-pilot-message") {
+    resetPilotMessage();
   }
   if (action === "copy-adult-invite") {
     if (!requireOwnerAccess("Bare Google-eier kan kopiere vokseninvitasjon.")) return;
