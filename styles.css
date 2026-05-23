@@ -224,6 +224,13 @@ button:disabled {
   box-shadow: none;
 }
 
+.btn.compact-btn {
+  min-height: 34px;
+  padding: 7px 10px;
+  border-radius: 11px;
+  font-size: 0.86rem;
+}
+
 .btn.success {
   background: var(--success);
   color: #063b30;
@@ -767,6 +774,43 @@ button:disabled {
 .share-check small {
   color: var(--muted);
   line-height: 1.35;
+}
+
+.share-check span.share-check-actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.guide-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.guide-steps div,
+.admin-local-snapshot div {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.guide-steps span,
+.admin-local-snapshot span {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.admin-local-snapshot {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .share-card {
@@ -1771,6 +1815,8 @@ th {
   .settings-menu,
   .share-grid,
   .share-checklist,
+  .guide-steps,
+  .admin-local-snapshot,
   .share-status-grid,
   .dashboard-grid,
   .motivation-grid,

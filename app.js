@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "78";
+const APP_VERSION = "79";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -1963,32 +1963,49 @@ function shareReadinessItems(adultInvite) {
     {
       title: "Google-eier",
       description: familyHasGoogleOwner() ? googleOwnerLabel() : "Logg inn med Google før familien deles med andre voksne.",
-      status: familyHasGoogleOwner() ? "done" : "rejected"
+      status: familyHasGoogleOwner() ? "done" : "rejected",
+      action: familyHasGoogleOwner() ? "" : "google-owner-login",
+      actionLabel: familyHasGoogleOwner() ? "" : "Logg inn"
     },
     {
       title: "Sky-synk",
       description: cloudOk ? cloudStatusLabel() : cloudPending ? "Venter på lagring til sky." : cloud.error || "Sky-synk er ikke klar ennå.",
-      status: cloudOk ? "done" : cloudPending ? "pending" : "rejected"
+      status: cloudOk ? "done" : cloudPending ? "pending" : "rejected",
+      action: cloudOk ? "" : "force-cloud-fetch",
+      actionLabel: cloudOk ? "" : "Hent nyeste",
+      secondaryAction: cloudOk ? "" : "force-cloud-save",
+      secondaryActionLabel: cloudOk ? "" : "Lagre nå"
     },
     {
       title: "Familiekode",
       description: familyCodeOk ? `Klar for barn og felles enheter: ${state.familyCode}` : "Mangler familiekode.",
-      status: familyCodeOk ? "done" : "rejected"
+      status: familyCodeOk ? "done" : "rejected",
+      action: familyCodeOk ? "copy-family-link" : "new-family-code",
+      actionLabel: familyCodeOk ? "Kopier lenke" : "Lag kode"
     },
     {
       title: "Barneprofiler",
       description: hasChildren ? `${activeChildren().length} aktive barn kan kobles til.` : "Legg til minst ett barn før appen deles til barneenheter.",
-      status: hasChildren ? "done" : "rejected"
+      status: hasChildren ? "done" : "rejected",
+      action: hasChildren ? "" : "adult-tab",
+      actionLabel: hasChildren ? "" : "Åpne Barn",
+      actionDataset: hasChildren ? null : { tab: "children" }
     },
     {
       title: "Vokseninvitasjon",
       description: adultInvite ? inviteExpiryLabel(adultInvite) : "Valgfritt. Lag en vokseninvitasjon når en annen voksen skal få tilgang.",
-      status: adultInvite ? "done" : "pending"
+      status: adultInvite ? "done" : "pending",
+      action: adultInvite ? "copy-adult-invite" : "new-adult-invite",
+      actionLabel: adultInvite ? "Kopier" : "Lag invitasjon"
     },
     {
       title: "Backup",
       description: backupOk ? "Backup finnes i denne økten." : "Hent skybackuper eller lag en sky-lagring før du deler bredt.",
-      status: backupOk ? "done" : "pending"
+      status: backupOk ? "done" : "pending",
+      action: "list-cloud-backups",
+      actionLabel: backupOk ? "Se backuper" : "Hent backuper",
+      secondaryAction: "force-cloud-save",
+      secondaryActionLabel: "Lagre nå"
     },
     {
       title: "Appversjon",
@@ -1998,9 +2015,20 @@ function shareReadinessItems(adultInvite) {
     {
       title: "Lokale endringer",
       description: cloud.pendingSave ? "Det finnes endringer som ikke er ferdig lagret til sky." : "Ingen ventende lokal sky-lagring.",
-      status: cloud.pendingSave ? "pending" : "done"
+      status: cloud.pendingSave ? "pending" : "done",
+      action: cloud.pendingSave ? "force-cloud-save" : "",
+      actionLabel: cloud.pendingSave ? "Lagre nå" : ""
     }
   ];
+}
+
+function readinessActionButton(item, key = "action") {
+  const action = item[key];
+  const label = item[key === "action" ? "actionLabel" : "secondaryActionLabel"];
+  if (!action || !label) return "";
+  const dataset = key === "action" ? item.actionDataset : item.secondaryActionDataset;
+  const attrs = dataset ? Object.entries(dataset).map(([name, value]) => ` data-${name}="${escapeAttr(value)}"`).join("") : "";
+  return `<button class="btn secondary compact-btn" data-action="${escapeAttr(action)}"${attrs}>${escapeText(label)}</button>`;
 }
 
 function sharingReadinessSummary(items = shareReadinessItems(activeInvites("adult")[0])) {
@@ -2031,6 +2059,12 @@ function sharingReadinessPanel() {
             <span>
               <strong>${escapeText(item.title)}</strong>
               <small>${escapeText(item.description)}</small>
+              ${(item.action || item.secondaryAction) ? `
+                <span class="share-check-actions">
+                  ${readinessActionButton(item)}
+                  ${readinessActionButton(item, "secondaryAction")}
+                </span>
+              ` : ""}
             </span>
           </div>
         `).join("")}
@@ -2082,6 +2116,7 @@ function adultSettings() {
   if (view.settingsPage === "levels") return settingsLevels();
   if (view.settingsPage === "cloud") return settingsCloud();
   if (view.settingsPage === "sharing-ready") return settingsSharingReady();
+  if (view.settingsPage === "share-new-family") return settingsShareNewFamily();
   if (view.settingsPage === "admin") return settingsAdmin();
   if (view.settingsPage === "migration") return settingsDataMigration();
   if (view.settingsPage === "reset") return settingsReset();
@@ -2102,6 +2137,7 @@ function settingsMenu() {
     ["levels", "Nivåer", "Navn og grenser for livstidsstjerner"],
     ["cloud", "App, sky og diagnose", "Miljø, Firebase, synk og feilsøking"],
     ["sharing-ready", "Klar for deling", "Siste kontroll før du sender appen videre"],
+    ["share-new-family", "Del med ny familie", "Startlenke og trygg forklaring for en ny familie"],
     ["admin", "Drift/admin", "Oversikt over familier og skyhelse"],
     ["migration", "Datamodell og migrering", "Plan og validering før neste Firestore-modell"],
     ["reset", "Nullstilling", "Start helt på nytt"]
@@ -2313,6 +2349,7 @@ function settingsSharingReady() {
           <button class="btn secondary" data-action="force-cloud-save">Lagre til sky nå</button>
           <button class="btn secondary" data-action="list-cloud-backups">Hent skybackuper</button>
           <button class="btn secondary" data-action="adult-tab" data-tab="share">Åpne Deling</button>
+          <button class="btn secondary" data-action="settings-page" data-page="share-new-family">Del med ny familie</button>
         </div>
         <div class="share-status-grid" style="margin-top:14px">
           <div><strong>Familie</strong><span>${escapeText(state.familyName || "-")}</span></div>
@@ -2321,6 +2358,64 @@ function settingsSharingReady() {
           <div><strong>Appversjon</strong><span>${APP_VERSION}</span></div>
           <div><strong>Skyrevisjon</strong><span>${Number(state.cloudRevision) || 0}</span></div>
           <div><strong>Siste synk</strong><span>${state.lastCloudSyncAt ? formatDate(state.lastCloudSyncAt) : "-"}</span></div>
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+function settingsShareNewFamily() {
+  const startLink = newFamilyStartLink();
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Del med ny familie</h2>
+          <p class="muted">Lenken under starter en helt ny familie uten å koble til dine familiedata.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Startlenke for første voksne</h3>
+            <p class="muted">Send denne til den voksne som skal eie sin egen familie i appen.</p>
+          </div>
+          <span class="pill done">Trygg å dele</span>
+        </div>
+        <div class="share-link-box">${escapeText(startLink)}</div>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn" data-action="copy-new-family-link">Kopier startlenke</button>
+          <button class="btn secondary" data-action="settings-page" data-page="sharing-ready">Sjekk din deling</button>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Slik starter en ny familie</h3>
+            <p class="muted">Dette er flyten personen møter når appen åpnes for første gang.</p>
+          </div>
+        </div>
+        <div class="guide-steps">
+          <div>
+            <strong>1. Åpne startlenken</strong>
+            <span>Appen viser oppstartsveilederen, ikke dine barn, oppgaver eller belønninger.</span>
+          </div>
+          <div>
+            <strong>2. Logg inn med Google</strong>
+            <span>Minst én voksen blir Google-eier. Det gjør deling og voksenrettigheter ryddige.</span>
+          </div>
+          <div>
+            <strong>3. Sett opp familien</strong>
+            <span>Legg inn barn, velg startpakker og importer standardoppgaver eller belønninger.</span>
+          </div>
+          <div>
+            <strong>4. Del internt</strong>
+            <span>Etterpå kan familien bruke familiekode til barnas enheter og vokseninvitasjon til andre voksne.</span>
+          </div>
+        </div>
+        <div class="setup-note">
+          Alt kan endres senere fra voksenpanelet. Startlenken er bare inngangen til en ny familie, og den inneholder ikke din familiekode.
         </div>
       </section>
     </section>
@@ -2638,6 +2733,7 @@ function restoreBackupModal(backupId) {
 
 function settingsAdmin() {
   const canRead = isCurrentOwner();
+  const currentSnapshot = currentFamilyAdminSnapshot();
   return `
     <section class="panel">
       <div class="section-title compact-title">
@@ -2651,6 +2747,20 @@ function settingsAdmin() {
         ${canRead
           ? "Denne visningen leser driftsmetadata fra familyCodes. Den endrer ikke familiedata."
           : "Drift/admin krever at denne enheten er logget inn som Google-eier. Du kan fortsatt bruke resten av appen anonymt."}
+      </div>
+      <div class="admin-local-snapshot">
+        <div>
+          <strong>Denne familien</strong>
+          <span>${escapeText(currentSnapshot.familyName || "-")} · ${escapeText(currentSnapshot.cloudFamilyId || "-")}</span>
+        </div>
+        <div>
+          <strong>Siste synk</strong>
+          <span>${formatMaybeDate(currentSnapshot.lastCloudSyncAt || currentSnapshot.updatedAt)}</span>
+        </div>
+        <div>
+          <strong>Innhold</strong>
+          <span>${Number(currentSnapshot.childrenCount) || 0} barn · ${Number(currentSnapshot.tasksCount) || 0} oppgaver · ${Number(currentSnapshot.completionsCount) || 0} fullføringer</span>
+        </div>
       </div>
       ${canRead ? "" : `
         <div class="auth-status-card pending">
@@ -2668,8 +2778,18 @@ function settingsAdmin() {
       </div>
       ${cloud.adminStatus ? `<p class="small">${escapeText(cloud.adminStatus)}</p>` : ""}
       ${cloud.adminError ? `<p class="small">Admin-feil: ${escapeText(cloud.adminError)}</p>` : ""}
+      ${cloud.adminError ? adminRulesHint() : ""}
       ${cloud.adminFamilies.length ? adminFamilyTable() : `<div class="empty">Ingen familier hentet i denne økten.</div>`}
     </section>
+  `;
+}
+
+function adminRulesHint() {
+  return `
+    <div class="setup-note warning-note">
+      Hvis du vil se alle familier her, må Firestore rules tillate eier/admin å lese <strong>familyCodes</strong>.
+      Inntil videre kan du bruke <strong>Vis denne familien</strong> for trygg lokal drift uten ekstra rules.
+    </div>
   `;
 }
 
@@ -4631,6 +4751,13 @@ function familyLink() {
   return url.toString();
 }
 
+function newFamilyStartLink() {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
 function adultInviteLink() {
   const invite = ensureAdultInvite();
   return adultInviteLinkFor(invite);
@@ -4675,6 +4802,16 @@ async function copyFamilyLink() {
     showToast("Koblingslenke kopiert.");
   } catch {
     prompt("Kopier koblingslenken:", link);
+  }
+}
+
+async function copyNewFamilyStartLink() {
+  const link = newFamilyStartLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("Startlenke for ny familie kopiert.");
+  } catch {
+    prompt("Kopier startlenken:", link);
   }
 }
 
@@ -5218,6 +5355,9 @@ app.addEventListener("click", (event) => {
   }
   if (action === "copy-family-link") {
     copyFamilyLink();
+  }
+  if (action === "copy-new-family-link") {
+    copyNewFamilyStartLink();
   }
   if (action === "copy-adult-invite") {
     if (!requireOwnerAccess("Bare Google-eier kan kopiere vokseninvitasjon.")) return;
