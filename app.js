@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "86";
+const APP_VERSION = "88";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -570,7 +570,7 @@ function renderDeveloperAdminPortal() {
         <div class="actions" style="margin-top:14px">
           <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent driftsstatus</button>
           <button class="btn secondary" data-action="copy-admin-summary" ${cloud.adminFamilies.length ? "" : "disabled"}>Kopier oversikt</button>
-          <button class="btn secondary" data-action="force-cloud-save">Send status for denne familien</button>
+          <button class="btn secondary" data-action="force-cloud-save">Oppdater min families status</button>
         </div>
         ${cloud.adminStatus ? `<p class="small">${escapeText(cloud.adminStatus)}</p>` : ""}
         ${cloud.adminError ? `<p class="small">Admin-feil: ${escapeText(cloud.adminError)}</p>` : ""}
@@ -2198,7 +2198,7 @@ function adultSettings() {
   if (view.settingsPage === "sharing-ready") return settingsSharingReady();
   if (view.settingsPage === "share-new-family") return settingsShareNewFamily();
   if (view.settingsPage === "pilot") return settingsPilotShare();
-  if (view.settingsPage === "admin") return settingsAdmin();
+  if (view.settingsPage === "admin") return isDeveloperAdmin() ? settingsAdmin() : settingsAdvancedMenu();
   if (view.settingsPage === "migration") return settingsDataMigration();
   if (view.settingsPage === "reset") return settingsReset();
   return settingsMenu();
@@ -2257,9 +2257,11 @@ function settingsAdvancedMenu() {
     ["sharing-ready", "Klar for deling", "Siste kontroll før du sender appen videre"],
     ["share-new-family", "Del med ny familie", "Startlenke og trygg forklaring for en ny familie"],
     ["pilot", "Send til pilotfamilie", "Ferdig tekst du kan kopiere og sende"],
-    ["admin", "Drift/admin", "Oversikt over familier og skyhelse"],
     ["migration", "Datamodell og migrering", "Plan og validering før neste Firestore-modell"]
   ];
+  if (isDeveloperAdmin()) {
+    items.splice(4, 0, ["admin", "Drift/admin", "Oversikt over familier og skyhelse"]);
+  }
   return `
     <section>
       <div class="section-title">
@@ -6359,8 +6361,7 @@ function currentFamilyAdminSnapshot() {
 }
 
 function adminHealthPayload(extra = {}) {
-  return {
-    ...extra,
+  const payload = {
     familyId: state.familyId || cloudFamilyId(),
     cloudFamilyId: cloudFamilyId(),
     familyName: state.familyName || "",
@@ -6384,15 +6385,16 @@ function adminHealthPayload(extra = {}) {
     lastError: cloud.error || cloud.backupError || cloud.manualFetchError || "",
     updatedAt: state.updatedAt || null
   };
+  return { ...payload, ...extra };
 }
 
-async function writeAdminHealthStatus() {
+async function writeAdminHealthStatus(extra = {}) {
   if (!cloud.setDoc || !cloud.doc || !state.setupCompleted) return;
   const familyId = cloudFamilyId();
   if (!familyId) return;
   const docRef = cloud.doc(cloud.db, adminHealthCollectionName(), familyId);
   await cloud.setDoc(docRef, {
-    ...adminHealthPayload(),
+    ...adminHealthPayload(extra),
     id: familyId,
     lastSeenAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
   }, { merge: true });
@@ -7028,7 +7030,11 @@ async function writeCloudState() {
     cloud.familyCodeLookupError = error?.message || "Kunne ikke lagre familiekode-register.";
     console.warn("Family code index write failed:", error);
   });
-  await writeAdminHealthStatus().catch((error) => {
+  await writeAdminHealthStatus({
+    pendingSave: false,
+    lastCloudSyncAt: now,
+    lastError: ""
+  }).catch((error) => {
     console.warn("Admin health write failed:", error);
   });
   await writeUserFamilyLink().catch((error) => {
