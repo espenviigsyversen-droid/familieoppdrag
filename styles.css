@@ -650,6 +650,49 @@ button:disabled {
   margin-bottom: 14px;
 }
 
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.help-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.help-card h3 {
+  margin: 0;
+}
+
+.help-card dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.help-card dt {
+  font-weight: 900;
+}
+
+.help-card dd {
+  margin: -4px 0 4px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.copy-textarea {
+  width: 100%;
+  min-height: 420px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.45;
+}
+
 .setup-option {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1826,6 +1869,7 @@ th {
   .setup-connect-grid,
   .profile-grid,
   .settings-menu,
+  .help-grid,
   .share-grid,
   .share-checklist,
   .guide-steps,

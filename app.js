@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "80";
+const APP_VERSION = "81";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -2114,10 +2114,12 @@ function adultSettings() {
   if (view.settingsPage === "backup") return settingsBackup();
   if (view.settingsPage === "starter") return settingsStarterPackages();
   if (view.settingsPage === "levels") return settingsLevels();
+  if (view.settingsPage === "help") return settingsHelpGuide();
   if (view.settingsPage === "advanced") return settingsAdvancedMenu();
   if (view.settingsPage === "cloud") return settingsCloud();
   if (view.settingsPage === "sharing-ready") return settingsSharingReady();
   if (view.settingsPage === "share-new-family") return settingsShareNewFamily();
+  if (view.settingsPage === "pilot") return settingsPilotShare();
   if (view.settingsPage === "admin") return settingsAdmin();
   if (view.settingsPage === "migration") return settingsDataMigration();
   if (view.settingsPage === "reset") return settingsReset();
@@ -2136,6 +2138,7 @@ function settingsMenu() {
     ["backup", "Backup og flytting", "Eksporter, importer og flytt data"],
     ["starter", "Startpakker", "Legg inn standard oppgaver og belønninger"],
     ["levels", "Nivåer", "Navn og grenser for livstidsstjerner"],
+    ["help", "Hjelp og brukerveileder", "Forklaring av knapper og vanlige oppgaver"],
     ["reset", "Nullstilling", "Start helt på nytt"]
   ];
   return `
@@ -2175,6 +2178,7 @@ function settingsAdvancedMenu() {
     ["cloud", "App, sky og diagnose", "Miljø, Firebase, synk og feilsøking"],
     ["sharing-ready", "Klar for deling", "Siste kontroll før du sender appen videre"],
     ["share-new-family", "Del med ny familie", "Startlenke og trygg forklaring for en ny familie"],
+    ["pilot", "Send til pilotfamilie", "Ferdig tekst du kan kopiere og sende"],
     ["admin", "Drift/admin", "Oversikt over familier og skyhelse"],
     ["migration", "Datamodell og migrering", "Plan og validering før neste Firestore-modell"]
   ];
@@ -2201,6 +2205,90 @@ function settingsAdvancedMenu() {
           </button>
         `).join("")}
       </div>
+    </section>
+  `;
+}
+
+function settingsHelpGuide() {
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Hjelp og brukerveileder</h2>
+          <p class="muted">Kort forklaring av hvordan appen brukes i praksis.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      <section class="panel">
+        <div class="help-grid">
+          <article class="help-card">
+            <h3>Toppknapper</h3>
+            <dl>
+              <dt>Standard</dt>
+              <dd>Setter denne enheten til å åpne rett her neste gang. Brukes ofte på barnets tablet eller voksen sin mobil.</dd>
+              <dt>Hjem</dt>
+              <dd>Går tilbake til profilvelgeren, der dere kan velge barn eller voksenmodus.</dd>
+              <dt>Lås</dt>
+              <dd>Låser voksenpanelet. På felles enheter må voksen-PIN skrives inn for å åpne igjen.</dd>
+            </dl>
+          </article>
+          <article class="help-card">
+            <h3>Oppgaver</h3>
+            <dl>
+              <dt>Ny oppgave</dt>
+              <dd>Åpne Voksenmodus, gå til Oppgaver og trykk Ny oppgave. Velg dager, barn, stjerner og om voksen må godkjenne.</dd>
+              <dt>Endre oppgave</dt>
+              <dd>Gå til Oppgaver og trykk Endre på oppgaven. Der kan du endre navn, kategori, dager, poeng og hvem den gjelder for.</dd>
+              <dt>Godkjenninger</dt>
+              <dd>Oppgaver som krever voksen havner under Godkjenninger før stjernene deles ut.</dd>
+            </dl>
+          </article>
+          <article class="help-card">
+            <h3>Belønninger</h3>
+            <dl>
+              <dt>Ny belønning</dt>
+              <dd>Gå til Belønninger og trykk Ny belønning. Sett kostnad i stjerner og hvilke barn som kan bruke den.</dd>
+              <dt>Be om belønning</dt>
+              <dd>Barna går til Belønning i sin profil og ber om en belønning når de har nok stjerner.</dd>
+              <dt>Godkjenn belønning</dt>
+              <dd>Voksen godkjenner eller avviser ønsket under Godkjenninger.</dd>
+            </dl>
+          </article>
+          <article class="help-card">
+            <h3>Barn og stjerner</h3>
+            <dl>
+              <dt>Legg til barn</dt>
+              <dd>Gå til Barn og trykk Legg til barn. Nye barn legges automatisk til på aktive oppgaver og belønninger.</dd>
+              <dt>Gi eller trekk stjerner</dt>
+              <dd>Gå til Barn, finn barnet og bruk Juster saldo. Skriv årsak og trykk Gi eller Trekk.</dd>
+              <dt>Livstidsstjerner</dt>
+              <dd>Brukes til nivåer. Juster bare ved korreksjon eller test, siden dette påvirker nivåfremdriften.</dd>
+            </dl>
+          </article>
+          <article class="help-card">
+            <h3>Deling i familien</h3>
+            <dl>
+              <dt>Barneenhet</dt>
+              <dd>Gå til Deling og bruk familiekode eller koblingslenke. Barn trenger ikke Google-innlogging.</dd>
+              <dt>Felles iPad/tablet</dt>
+              <dd>Koble til med familiekode og velg Profilvalg som standard. Da kan alle velge sin profil.</dd>
+              <dt>Ny voksen</dt>
+              <dd>Lag vokseninvitasjon fra Deling. Den voksne åpner lenken og logger inn med Google.</dd>
+            </dl>
+          </article>
+          <article class="help-card">
+            <h3>Synk og sikkerhet</h3>
+            <dl>
+              <dt>Sky-synk</dt>
+              <dd>Grønn synk betyr at appen lagrer mot Firestore. Hvis noe virker feil, åpne appen på nytt og vent litt.</dd>
+              <dt>Backup</dt>
+              <dd>Backup og flytting lar voksne hente skybackuper og gjenopprette data hvis noe går galt.</dd>
+              <dt>Nullstilling</dt>
+              <dd>Nullstilling starter enheten/familien på nytt og krever voksen-PIN. Brukes med varsomhet.</dd>
+            </dl>
+          </article>
+        </div>
+      </section>
     </section>
   `;
 }
@@ -2460,6 +2548,71 @@ function settingsShareNewFamily() {
       </section>
     </section>
   `;
+}
+
+function settingsPilotShare() {
+  const text = pilotShareText();
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Send til pilotfamilie</h2>
+          <p class="muted">Kopier en ferdig introduksjonstekst når appen skal testes av en ny familie.</p>
+        </div>
+        ${settingsBackButton("advanced")}
+      </div>
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Pilotmelding</h3>
+            <p class="muted">Teksten bruker startlenken for ny familie og forklarer første oppsett.</p>
+          </div>
+          <button class="btn" data-action="copy-pilot-message">Kopier tekst</button>
+        </div>
+        <textarea class="copy-textarea" readonly>${escapeText(text)}</textarea>
+      </section>
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Før du sender</h3>
+            <p class="muted">Kort intern sjekkliste for pilot.</p>
+          </div>
+        </div>
+        <div class="guide-steps">
+          <div><strong>Startlenke</strong><span>Send bare startlenken uten familiekode, slik at de lager sin egen familie.</span></div>
+          <div><strong>Google-eier</strong><span>Minst en voksen i pilotfamilien logger inn med Google og blir eier.</span></div>
+          <div><strong>Familiekode</strong><span>Barna og felles tablet kobles etterpå fra Deling-fanen i deres egen familie.</span></div>
+          <div><strong>Support</strong><span>Ved feil kan de sende bilde fra Innstillinger, Avansert og drift, App, sky og diagnose.</span></div>
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+function pilotShareText() {
+  return [
+    "Hei! Her er lenken til Familieoppdrag, slik at dere kan teste appen med deres egen familie:",
+    "",
+    newFamilyStartLink(),
+    "",
+    "Slik kommer dere i gang:",
+    "1. Åpne lenken på telefon eller PC.",
+    "2. En voksen logger inn med Google og blir eier av familien.",
+    "3. Følg oppstartsveilederen: legg inn barn, velg startpakker og sett voksen-PIN.",
+    "4. Når familien er opprettet, åpne Deling i voksenpanelet.",
+    "5. Bruk familiekode eller koblingslenke for barnas iPad/tablet eller en felles enhet.",
+    "6. På barnas enheter trenger dere ikke Google-innlogging. Velg barnets profil eller Profilvalg som standard.",
+    "7. For best opplevelse bør appen legges på hjemskjermen på iPad/tablet/mobil.",
+    "",
+    "Kort forklart:",
+    "- Standard gjør at enheten åpner rett på valgt skjerm neste gang.",
+    "- Hjem går tilbake til profilvelgeren.",
+    "- Lås låser voksenpanelet og krever PIN for å åpne igjen.",
+    "- Oppgaver, belønninger, barn og ekstra stjerner styres fra voksenpanelet.",
+    "- Hjelp og brukerveileder ligger under Innstillinger.",
+    "",
+    "Hvis noe ikke synker eller oppfører seg rart, send meg gjerne et skjermbilde fra Innstillinger > Avansert og drift > App, sky og diagnose."
+  ].join("\n");
 }
 
 function settingsStarterPackages() {
@@ -4855,6 +5008,16 @@ async function copyNewFamilyStartLink() {
   }
 }
 
+async function copyPilotMessage() {
+  const text = pilotShareText();
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Pilottekst kopiert.");
+  } catch {
+    prompt("Kopier pilotteksten:", text);
+  }
+}
+
 async function copyAdultInviteLink() {
   const link = adultInviteLink();
   try {
@@ -5398,6 +5561,9 @@ app.addEventListener("click", (event) => {
   }
   if (action === "copy-new-family-link") {
     copyNewFamilyStartLink();
+  }
+  if (action === "copy-pilot-message") {
+    copyPilotMessage();
   }
   if (action === "copy-adult-invite") {
     if (!requireOwnerAccess("Bare Google-eier kan kopiere vokseninvitasjon.")) return;
