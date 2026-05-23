@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "70";
+const APP_VERSION = "71";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -39,8 +39,13 @@ const cloud = {
   auth: null,
   authUser: null,
   doc: null,
+  collection: null,
+  query: null,
+  where: null,
+  limit: null,
   docRef: null,
   getDoc: null,
+  getDocs: null,
   setDoc: null,
   runTransaction: null,
   onSnapshot: null,
@@ -3674,7 +3679,10 @@ async function signInExistingFamilyWithGoogle() {
     cloud.authUser = normalizeAuthUser(result.user);
     const linkRef = userFamilyLinkRef(result.user.uid);
     const snapshot = linkRef ? await cloud.getDoc(linkRef) : null;
-    const data = snapshot?.exists() ? snapshot.data() : null;
+    let data = snapshot?.exists() ? snapshot.data() : null;
+    if (!data?.cloudFamilyId && !data?.familyId) {
+      data = await findFamilyLinkByOwner(result.user);
+    }
     const familyId = data?.cloudFamilyId || data?.familyId || "";
     if (!familyId) {
       cloud.error = "Fant ingen familie koblet til denne Google-kontoen. Bruk familiekode, eller åpne appen én gang som eier på en enhet som allerede er koblet til.";
@@ -3699,6 +3707,30 @@ async function signInExistingFamilyWithGoogle() {
     cloud.error = error?.message || "Kunne ikke logge inn med Google";
     showToast("Google-innlogging feilet.");
     render();
+  }
+}
+
+async function findFamilyLinkByOwner(user) {
+  if (!user?.uid || !cloud.collection || !cloud.query || !cloud.where || !cloud.getDocs) return null;
+  try {
+    const codeCollection = APP_CONFIG.cloudSync.codeCollection || "familyCodes";
+    const familyCodesRef = cloud.collection(cloud.db, codeCollection);
+    const constraints = [cloud.where("ownerUid", "==", user.uid)];
+    if (cloud.limit) constraints.push(cloud.limit(1));
+    const queryByUid = cloud.query(familyCodesRef, ...constraints);
+    const snapshot = await cloud.getDocs(queryByUid);
+    const doc = snapshot.docs?.[0];
+    if (!doc) return null;
+    const data = doc.data() || {};
+    return {
+      familyId: data.familyId || data.cloudFamilyId || "",
+      cloudFamilyId: data.cloudFamilyId || data.familyId || "",
+      familyCode: data.code || doc.id || "",
+      role: "owner"
+    };
+  } catch (error) {
+    console.warn("Owner family lookup failed:", error);
+    return null;
   }
 }
 
@@ -4701,7 +4733,7 @@ async function initFirebaseSync() {
   try {
     view.bootMessage = "Kobler til Firestore";
     render();
-    const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult }, { getFirestore, doc, getDoc, setDoc, runTransaction, onSnapshot, serverTimestamp }] = await Promise.all([
+    const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult }, { getFirestore, doc, collection, query, where, limit, getDoc, getDocs, setDoc, runTransaction, onSnapshot, serverTimestamp }] = await Promise.all([
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js"),
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js"),
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js")
@@ -4716,7 +4748,12 @@ async function initFirebaseSync() {
     cloud.signInWithPopup = signInWithPopup;
     cloud.signInWithRedirect = signInWithRedirect;
     cloud.doc = doc;
+    cloud.collection = collection;
+    cloud.query = query;
+    cloud.where = where;
+    cloud.limit = limit;
     cloud.getDoc = getDoc;
+    cloud.getDocs = getDocs;
     cloud.setDoc = setDoc;
     cloud.runTransaction = runTransaction;
     cloud.onSnapshot = onSnapshot;
