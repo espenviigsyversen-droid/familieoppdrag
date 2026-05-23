@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "71";
+const APP_VERSION = "74";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -70,6 +70,13 @@ const cloud = {
   backupError: "",
   mergeLastAt: null,
   mergeLastSummary: "",
+  manualFetchLastAt: null,
+  manualFetchStatus: "",
+  manualFetchError: "",
+  backupList: [],
+  backupListStatus: "",
+  backupRestoreStatus: "",
+  backupRestoreError: "",
   applyingRemote: false
 };
 
@@ -464,6 +471,10 @@ function render() {
 }
 
 function renderGlobalOverlays() {
+  const banner = syncStatusBanner();
+  if (banner) {
+    app.insertAdjacentHTML("afterbegin", banner);
+  }
   if (view.badgeCelebration) {
     app.insertAdjacentHTML("beforeend", badgeCelebrationModal(view.badgeCelebration));
   }
@@ -2308,8 +2319,14 @@ function settingsCloud() {
       ${cloud.backupLastAt ? `<p class="small">Siste skybackup: ${formatDate(cloud.backupLastAt)} (rev. ${Number(cloud.backupLastRevision) || 0})</p>` : ""}
       ${cloud.backupStatus ? `<p class="small">Backup-status: ${escapeText(cloud.backupStatus)}</p>` : ""}
       ${cloud.backupError ? `<p class="small">Backup-feil: ${escapeText(cloud.backupError)}</p>` : ""}
+      ${cloud.backupListStatus ? `<p class="small">Backup-liste: ${escapeText(cloud.backupListStatus)}</p>` : ""}
+      ${cloud.backupRestoreStatus ? `<p class="small">Gjenoppretting: ${escapeText(cloud.backupRestoreStatus)}</p>` : ""}
+      ${cloud.backupRestoreError ? `<p class="small">Gjenopprettingsfeil: ${escapeText(cloud.backupRestoreError)}</p>` : ""}
       ${cloud.mergeLastAt ? `<p class="small">Siste safe merge: ${formatDate(cloud.mergeLastAt)}</p>` : ""}
       ${cloud.mergeLastSummary ? `<p class="small">Safe merge: ${escapeText(cloud.mergeLastSummary)}</p>` : ""}
+      ${cloud.manualFetchLastAt ? `<p class="small">Sist hentet manuelt: ${formatDate(cloud.manualFetchLastAt)}</p>` : ""}
+      ${cloud.manualFetchStatus ? `<p class="small">Manuell henting: ${escapeText(cloud.manualFetchStatus)}</p>` : ""}
+      ${cloud.manualFetchError ? `<p class="small">Manuell hente-feil: ${escapeText(cloud.manualFetchError)}</p>` : ""}
       ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
       ${cloud.lastFetchedAt ? `<p class="small">Sist hentet fra sky: ${formatDate(cloud.lastFetchedAt)}</p>` : ""}
       ${state.syncDiagnostics?.lastTestAt ? `<p class="small">Siste synk-test: ${formatDate(state.syncDiagnostics.lastTestAt)} fra ${escapeText(state.syncDiagnostics.lastTestDevice || "ukjent enhet")}</p>` : ""}
@@ -2317,7 +2334,18 @@ function settingsCloud() {
       <div class="diagnosis-box">
         <pre>${escapeText(diagnosis)}</pre>
       </div>
+      <div class="backup-restore-box">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Skybackup</h3>
+            <p class="muted">Hent siste backupkopier og gjenopprett bare hvis familiedata faktisk må rulles tilbake.</p>
+          </div>
+          <button class="btn secondary" data-action="list-cloud-backups">Hent backuper</button>
+        </div>
+        ${cloud.backupList?.length ? cloudBackupList() : `<div class="empty">Ingen backuper hentet i denne økten.</div>`}
+      </div>
       <div class="actions" style="margin-top:14px">
+        <button class="btn secondary" data-action="force-cloud-fetch">Hent nyeste data</button>
         <button class="btn secondary" data-action="force-cloud-save">Lagre til sky nå</button>
         <button class="btn secondary" data-action="migrate-cloud-family" ${canMigrate ? "" : "disabled"}>Flytt til familie-sti</button>
         <button class="btn secondary" data-action="test-cloud-sync">Test sky-synk</button>
@@ -2325,6 +2353,23 @@ function settingsCloud() {
         <button class="btn secondary" data-action="refresh-app">Oppdater app</button>
       </div>
     </section>
+  `;
+}
+
+function cloudBackupList() {
+  return `
+    <div class="backup-list">
+      ${cloud.backupList.map((backup) => `
+        <article class="backup-item">
+          <div>
+            <strong>${escapeText(backup.reason || "Backup")}</strong>
+            <p class="muted">${backup.createdAt ? formatDate(backup.createdAt) : "Ukjent tidspunkt"} · rev. ${Number(backup.cloudRevision) || 0}</p>
+            <p class="small">${escapeText(backup.familyName || state.familyName || "Familie")} · ${escapeText(backup.id)}</p>
+          </div>
+          <button class="btn warning" data-action="restore-cloud-backup" data-backup-id="${escapeAttr(backup.id)}">Gjenopprett</button>
+        </article>
+      `).join("")}
+    </div>
   `;
 }
 
@@ -3489,6 +3534,80 @@ function cloudStatusClass() {
   return "pending";
 }
 
+function syncStatusBanner() {
+  if (view.booting || isSetupPreview()) return "";
+  const status = syncBannerStatus();
+  if (!status) return "";
+  return `
+    <aside class="sync-banner ${status.kind}" role="status" aria-live="polite">
+      <div class="sync-banner-icon">${status.icon}</div>
+      <div>
+        <strong>${escapeText(status.title)}</strong>
+        <p>${escapeText(status.text)}</p>
+      </div>
+      ${status.action ? `<button class="btn secondary" type="button" data-action="${status.action}">${status.actionLabel}</button>` : ""}
+    </aside>
+  `;
+}
+
+function syncBannerStatus() {
+  if (!cloud.enabled) return null;
+  if (cloud.error) {
+    const canFetch = cloud.ready && cloud.initialFetchComplete;
+    return {
+      kind: "rejected",
+      icon: "!",
+      title: "Sky-synk trenger oppmerksomhet",
+      text: cloud.error,
+      action: canFetch ? "force-cloud-fetch" : "refresh-app",
+      actionLabel: canFetch ? "Hent nyeste" : "Prøv igjen"
+    };
+  }
+  if (!cloud.ready || !cloud.initialFetchComplete) {
+    return {
+      kind: "pending",
+      icon: "...",
+      title: "Henter nyeste familiedata",
+      text: "Vent litt før du registrerer nye oppgaver på denne enheten."
+    };
+  }
+  if (cloud.pendingSave) {
+    return {
+      kind: "pending",
+      icon: "...",
+      title: "Lagrer til sky",
+      text: "Endringer på denne enheten er ikke ferdig lagret ennå."
+    };
+  }
+  if (cloud.staleWriteBlockedAt && isRecentEvent(cloud.staleWriteBlockedAt, 10)) {
+    return {
+      kind: "warning",
+      icon: "!",
+      title: "Gammel lokal data ble stoppet",
+      text: cloud.staleWriteMessage || "Nyeste familiedata er hentet fra skyen.",
+      action: "force-cloud-fetch",
+      actionLabel: "Sjekk igjen"
+    };
+  }
+  if (cloud.mergeLastAt && isRecentEvent(cloud.mergeLastAt, 10)) {
+    return {
+      kind: "done",
+      icon: "✓",
+      title: "Offline-endringer ble flettet inn",
+      text: cloud.mergeLastSummary || "Lokale endringer er tatt vare på og synkes videre.",
+      action: "force-cloud-fetch",
+      actionLabel: "Sjekk sky"
+    };
+  }
+  return null;
+}
+
+function isRecentEvent(value, minutes) {
+  const time = new Date(value || 0).getTime();
+  if (!Number.isFinite(time)) return false;
+  return Date.now() - time < minutes * 60 * 1000;
+}
+
 function cloudPathLabel(familyId = cloudFamilyId()) {
   const config = APP_CONFIG.cloudSync;
   return `${config.stateCollection}/${familyId}/${config.stateSubcollection}/${config.stateDocument}`;
@@ -3818,8 +3937,14 @@ function syncDiagnosisText() {
     `Skybackup revisjon: ${Number(cloud.backupLastRevision) || 0}`,
     `Skybackup status: ${cloud.backupStatus || "-"}`,
     `Skybackup feil: ${cloud.backupError || "ingen"}`,
+    `Backup-liste: ${cloud.backupListStatus || "-"}`,
+    `Backup-gjenoppretting: ${cloud.backupRestoreStatus || "-"}`,
+    `Backup-gjenopprettingsfeil: ${cloud.backupRestoreError || "ingen"}`,
     `Siste safe merge: ${cloud.mergeLastAt ? formatDate(cloud.mergeLastAt) : "ingen"}`,
     `Safe merge: ${cloud.mergeLastSummary || "ingen lokale endringer flettet"}`,
+    `Sist hentet manuelt: ${cloud.manualFetchLastAt ? formatDate(cloud.manualFetchLastAt) : "ingen"}`,
+    `Manuell henting: ${cloud.manualFetchStatus || "-"}`,
+    `Manuell hente-feil: ${cloud.manualFetchError || "ingen"}`,
     `Migrert sky-sti: ${state.cloudMigration?.migratedAt ? `${state.cloudMigration.from} -> ${state.cloudMigration.to}` : "nei"}`,
     `Migreringsstatus: ${state.cloudMigration?.status || "ikke startet"}`,
     `Migreringsfeil: ${state.cloudMigration?.error || "ingen"}`,
@@ -4548,6 +4673,9 @@ app.addEventListener("click", (event) => {
   if (action === "existing-family-google-login") {
     signInExistingFamilyWithGoogle();
   }
+  if (action === "force-cloud-fetch") {
+    fetchLatestCloudState();
+  }
   if (action === "force-cloud-save") {
     cloud.pendingSave = true;
     flushCloudSave();
@@ -4558,6 +4686,12 @@ app.addEventListener("click", (event) => {
   }
   if (action === "test-cloud-sync") {
     runCloudSyncTest();
+  }
+  if (action === "list-cloud-backups") {
+    listCloudBackups();
+  }
+  if (action === "restore-cloud-backup") {
+    restoreCloudBackup(button.dataset.backupId);
   }
   if (action === "copy-diagnosis") {
     copyDiagnosis();
@@ -4909,7 +5043,7 @@ async function loadBestCloudState() {
   }));
   const candidates = snapshots.filter(Boolean);
   if (!candidates.length) return null;
-  candidates.sort((a, b) => remoteStateTime(b.state) - remoteStateTime(a.state));
+  candidates.sort((a, b) => (Number(b.state?.cloudRevision) || 0) - (Number(a.state?.cloudRevision) || 0) || remoteStateTime(b.state) - remoteStateTime(a.state));
   return candidates[0].state;
 }
 
@@ -4983,6 +5117,17 @@ function cloudBackupDocRefForFamily(familyId, backupId) {
   );
 }
 
+function cloudBackupCollectionRefForFamily(familyId = cloudFamilyId()) {
+  if (!cloud.collection || !cloud.db) return null;
+  const config = APP_CONFIG.cloudSync;
+  return cloud.collection(
+    cloud.db,
+    config.stateCollection,
+    familyId,
+    "backups"
+  );
+}
+
 function cloudBackupId(reason, revision, createdAt) {
   const safeReason = slugify(reason || "backup") || "backup";
   if (revision > 0) return `rev-${revision}-${safeReason}`;
@@ -5015,9 +5160,144 @@ async function writeCloudBackup(reason, snapshotState, revision = Number(snapsho
   return backupId;
 }
 
+async function listCloudBackups() {
+  if (!cloud.ready || !cloud.getDocs || !cloud.collection) {
+    showToast("Skyen er ikke klar ennå.");
+    return;
+  }
+  try {
+    cloud.backupListStatus = "Henter backuper ...";
+    cloud.backupRestoreError = "";
+    render();
+    const collectionRef = cloudBackupCollectionRefForFamily();
+    const snapshot = collectionRef ? await cloud.getDocs(collectionRef) : null;
+    const backups = (snapshot?.docs || [])
+      .map((doc) => ({ id: doc.id, ...(doc.data() || {}) }))
+      .filter((item) => item.state)
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 10);
+    cloud.backupList = backups;
+    cloud.backupListStatus = backups.length ? `Fant ${backups.length} backup(er).` : "Ingen backuper funnet.";
+    showToast(backups.length ? "Backuper er hentet." : "Ingen backuper funnet.");
+    render();
+  } catch (error) {
+    cloud.backupListStatus = "Kunne ikke hente backuper.";
+    cloud.backupRestoreError = error?.message || "Backup-listen kunne ikke hentes.";
+    showToast("Kunne ikke hente backuper.");
+    render();
+  }
+}
+
+async function restoreCloudBackup(backupId) {
+  if (!backupId || !cloud.ready || !cloud.getDoc || !cloud.setDoc) {
+    showToast("Skyen er ikke klar ennå.");
+    return;
+  }
+  const backupMeta = cloud.backupList.find((item) => item.id === backupId);
+  const ok = confirm(`Vil du gjenopprette backupen ${backupMeta?.createdAt ? formatDate(backupMeta.createdAt) : backupId}? Nåværende skydata blir sikkerhetskopiert først.`);
+  if (!ok) return;
+  try {
+    cloud.backupRestoreStatus = "Gjenoppretter backup ...";
+    cloud.backupRestoreError = "";
+    render();
+    const backupRef = cloudBackupDocRefForFamily(cloudFamilyId(), backupId);
+    const backupSnapshot = await cloud.getDoc(backupRef);
+    const backup = backupSnapshot.exists() ? backupSnapshot.data() : null;
+    if (!backup?.state) {
+      cloud.backupRestoreStatus = "Backupen mangler state-data.";
+      showToast("Backupen kan ikke gjenopprettes.");
+      render();
+      return;
+    }
+    const currentSnapshot = await cloud.getDoc(cloud.docRef);
+    const currentRemoteState = currentSnapshot.exists() ? currentSnapshot.data()?.state : null;
+    if (currentRemoteState) {
+      await writeCloudBackup("before-restore", currentRemoteState, Number(currentRemoteState.cloudRevision) || 0);
+    }
+    const now = new Date().toISOString();
+    const nextRevision = Math.max(Number(state.cloudRevision) || 0, Number(cloud.remoteRevision) || 0, Number(currentRemoteState?.cloudRevision) || 0) + 1;
+    const restoredState = normalizeLocalState({
+      ...backup.state,
+      cloudRevision: nextRevision,
+      lastCloudSyncAt: now,
+      updatedAt: now
+    }, true);
+    await cloud.setDoc(cloud.docRef, {
+      familyId: restoredState.familyId || cloudFamilyId(),
+      familyName: restoredState.familyName || "",
+      state: restoredState,
+      cloudRevision: nextRevision,
+      restoredFromBackup: backupId,
+      updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
+    }, { merge: true });
+    cloud.applyingRemote = true;
+    state = restoredState;
+    cloud.remoteRevision = nextRevision;
+    cloud.lastSavedAt = now;
+    cloud.lastFetchedAt = now;
+    cloud.backupRestoreStatus = `Gjenopprettet ${backupId} som rev. ${nextRevision}.`;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    cloud.applyingRemote = false;
+    await writeFamilyCodeIndex().catch((error) => console.warn("Family code index write failed after restore:", error));
+    showToast("Backup er gjenopprettet.");
+    render();
+  } catch (error) {
+    cloud.applyingRemote = false;
+    cloud.backupRestoreStatus = "Gjenoppretting feilet.";
+    cloud.backupRestoreError = error?.message || "Kunne ikke gjenopprette backup.";
+    showToast("Kunne ikke gjenopprette backup.");
+    render();
+  }
+}
+
 function remoteStateTime(remoteState) {
   const time = new Date(remoteState?.updatedAt || remoteState?.createdAt || 0).getTime();
   return Number.isFinite(time) ? time : 0;
+}
+
+async function fetchLatestCloudState() {
+  if (!cloud.enabled || !cloud.ready || !cloud.initialFetchComplete || !cloud.getDoc || !cloud.docRef) {
+    showToast("Skyen er ikke klar ennå.");
+    return;
+  }
+  if (cloud.pendingSave) {
+    showToast("Vent til lokale endringer er lagret først.");
+    return;
+  }
+  try {
+    cloud.manualFetchStatus = "Henter nyeste skydata ...";
+    cloud.manualFetchError = "";
+    render();
+    const remoteState = await loadBestCloudState();
+    if (!remoteState) {
+      cloud.manualFetchLastAt = new Date().toISOString();
+      cloud.manualFetchStatus = "Fant ingen skydata for denne familien.";
+      showToast("Fant ingen skydata.");
+      render();
+      return;
+    }
+    const remoteRevision = Number(remoteState.cloudRevision) || 0;
+    const localRevision = Number(state.cloudRevision) || 0;
+    const shouldApply = remoteRevision > localRevision ||
+      (remoteRevision === localRevision && remoteState.updatedAt && remoteState.updatedAt !== state.updatedAt && remoteStateTime(remoteState) >= remoteStateTime(state));
+    cloud.manualFetchLastAt = new Date().toISOString();
+    cloud.remoteRevision = Math.max(Number(cloud.remoteRevision) || 0, remoteRevision);
+    if (!shouldApply) {
+      cloud.manualFetchStatus = remoteRevision < localRevision ? "Lokal data er nyere enn skyen." : "Denne enheten har allerede nyeste skydata.";
+      showToast("Du har allerede nyeste data.");
+      render();
+      return;
+    }
+    applyNewerCloudState(remoteState, remoteRevision, "manual-cloud-fetch");
+    cloud.manualFetchStatus = `Hentet sky-revisjon ${remoteRevision || "uten revisjon"}.`;
+    showToast("Nyeste skydata er hentet.");
+    render();
+  } catch (error) {
+    cloud.manualFetchError = error?.message || "Kunne ikke hente nyeste skydata.";
+    cloud.manualFetchStatus = "Henting feilet.";
+    showToast("Kunne ikke hente nyeste data.");
+    render();
+  }
 }
 
 function backupCloudState(reason, snapshotState) {

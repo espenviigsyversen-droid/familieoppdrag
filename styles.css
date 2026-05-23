@@ -1181,6 +1181,78 @@ button:disabled {
   color: #8f1234;
 }
 
+.sync-banner {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: min(1120px, calc(100% - 32px));
+  margin: 14px auto 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 28px rgba(38, 42, 93, 0.08);
+}
+
+.sync-banner-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: #eef2ff;
+  color: var(--primary-dark);
+  font-weight: 950;
+}
+
+.sync-banner strong,
+.sync-banner p {
+  margin: 0;
+}
+
+.sync-banner p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.sync-banner.pending {
+  border-color: rgba(255, 183, 3, 0.42);
+  background: #fffaf0;
+}
+
+.sync-banner.pending .sync-banner-icon,
+.sync-banner.warning .sync-banner-icon {
+  background: #fff4cc;
+  color: #6b4400;
+}
+
+.sync-banner.warning {
+  border-color: rgba(255, 183, 3, 0.55);
+  background: #fff7dd;
+}
+
+.sync-banner.done {
+  border-color: rgba(6, 214, 160, 0.34);
+  background: #effdf8;
+}
+
+.sync-banner.done .sync-banner-icon {
+  background: #d8fbef;
+  color: #046c56;
+}
+
+.sync-banner.rejected {
+  border-color: rgba(239, 71, 111, 0.34);
+  background: #fff1f4;
+}
+
+.sync-banner.rejected .sync-banner-icon {
+  background: #ffe3ea;
+  color: #8f1234;
+}
+
 .diagnosis-box {
   margin-top: 14px;
   padding: 14px;
@@ -1195,6 +1267,36 @@ button:disabled {
   color: var(--ink);
   font: 0.85rem/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   white-space: pre-wrap;
+}
+
+.backup-restore-box {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.backup-list {
+  display: grid;
+  gap: 10px;
+}
+
+.backup-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.backup-item p {
+  margin: 3px 0 0;
 }
 
 .tabs {
@@ -1574,6 +1676,19 @@ th {
   .form-grid,
   .filter-bar,
   .level-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sync-banner {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .sync-banner .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .backup-item {
     grid-template-columns: 1fr;
   }
 
