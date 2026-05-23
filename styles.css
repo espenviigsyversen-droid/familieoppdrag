@@ -602,6 +602,10 @@ button:disabled {
   gap: 12px;
 }
 
+.settings-advanced-entry {
+  margin-top: 16px;
+}
+
 .settings-tile {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -635,6 +639,15 @@ button:disabled {
   color: var(--primary);
   font-size: 1.7rem;
   font-weight: 900;
+}
+
+.settings-tile.advanced {
+  border-color: rgba(108, 99, 255, 0.25);
+  background: rgba(108, 99, 255, 0.06);
+}
+
+.advanced-note {
+  margin-bottom: 14px;
 }
 
 .setup-option {

@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "79";
+const APP_VERSION = "80";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -2114,6 +2114,7 @@ function adultSettings() {
   if (view.settingsPage === "backup") return settingsBackup();
   if (view.settingsPage === "starter") return settingsStarterPackages();
   if (view.settingsPage === "levels") return settingsLevels();
+  if (view.settingsPage === "advanced") return settingsAdvancedMenu();
   if (view.settingsPage === "cloud") return settingsCloud();
   if (view.settingsPage === "sharing-ready") return settingsSharingReady();
   if (view.settingsPage === "share-new-family") return settingsShareNewFamily();
@@ -2123,8 +2124,8 @@ function adultSettings() {
   return settingsMenu();
 }
 
-function settingsBackButton() {
-  return `<button class="btn secondary" data-action="settings-page" data-page="menu">Tilbake</button>`;
+function settingsBackButton(page = "menu") {
+  return `<button class="btn secondary" data-action="settings-page" data-page="${escapeAttr(page)}">Tilbake</button>`;
 }
 
 function settingsMenu() {
@@ -2135,11 +2136,6 @@ function settingsMenu() {
     ["backup", "Backup og flytting", "Eksporter, importer og flytt data"],
     ["starter", "Startpakker", "Legg inn standard oppgaver og belønninger"],
     ["levels", "Nivåer", "Navn og grenser for livstidsstjerner"],
-    ["cloud", "App, sky og diagnose", "Miljø, Firebase, synk og feilsøking"],
-    ["sharing-ready", "Klar for deling", "Siste kontroll før du sender appen videre"],
-    ["share-new-family", "Del med ny familie", "Startlenke og trygg forklaring for en ny familie"],
-    ["admin", "Drift/admin", "Oversikt over familier og skyhelse"],
-    ["migration", "Datamodell og migrering", "Plan og validering før neste Firestore-modell"],
     ["reset", "Nullstilling", "Start helt på nytt"]
   ];
   return `
@@ -2149,6 +2145,50 @@ function settingsMenu() {
           <h2>Innstillinger</h2>
           <p class="muted">Velg området du vil endre.</p>
         </div>
+      </div>
+      <div class="settings-menu">
+        ${items.map(([page, title, description]) => `
+          <button class="settings-tile" data-action="settings-page" data-page="${page}">
+            <span>
+              <strong>${title}</strong>
+              <small>${description}</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
+        `).join("")}
+      </div>
+      <div class="settings-advanced-entry">
+        <button class="settings-tile advanced" data-action="settings-page" data-page="advanced">
+          <span>
+            <strong>Avansert og drift</strong>
+            <small>Feilsøking, deling med nye familier, admin og datamodell</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function settingsAdvancedMenu() {
+  const items = [
+    ["cloud", "App, sky og diagnose", "Miljø, Firebase, synk og feilsøking"],
+    ["sharing-ready", "Klar for deling", "Siste kontroll før du sender appen videre"],
+    ["share-new-family", "Del med ny familie", "Startlenke og trygg forklaring for en ny familie"],
+    ["admin", "Drift/admin", "Oversikt over familier og skyhelse"],
+    ["migration", "Datamodell og migrering", "Plan og validering før neste Firestore-modell"]
+  ];
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Avansert og drift</h2>
+          <p class="muted">For feilsøking, deling og teknisk drift. Vanlig familiebruk krever normalt ikke disse valgene.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      <div class="setup-note advanced-note">
+        Dette området er nyttig for deg som utvikler eller familieeier ved support, backup, sky-synk og deling med nye familier.
       </div>
       <div class="settings-menu">
         ${items.map(([page, title, description]) => `
@@ -2334,7 +2374,7 @@ function settingsSharingReady() {
           <h2>Klar for deling</h2>
           <p class="muted">Siste tekniske kontroll før appen deles med andre enheter eller familier.</p>
         </div>
-        ${settingsBackButton()}
+        ${settingsBackButton("advanced")}
       </div>
       ${sharingReadinessPanel()}
       <section class="panel">
@@ -2373,7 +2413,7 @@ function settingsShareNewFamily() {
           <h2>Del med ny familie</h2>
           <p class="muted">Lenken under starter en helt ny familie uten å koble til dine familiedata.</p>
         </div>
-        ${settingsBackButton()}
+        ${settingsBackButton("advanced")}
       </div>
       <section class="panel">
         <div class="section-title compact-title">
@@ -2492,7 +2532,7 @@ function settingsCloud() {
           <h2>App, sky og diagnose</h2>
           <p class="muted">Miljø, Firebase, synk og feilsøking.</p>
         </div>
-        ${settingsBackButton()}
+        ${settingsBackButton("advanced")}
       </div>
       <div class="pill-row">
         <span class="pill ${cloud.ready ? "done" : cloud.error ? "rejected" : "pending"}">${cloudStatusLabel()}</span>
@@ -2741,7 +2781,7 @@ function settingsAdmin() {
           <h2>Drift/admin</h2>
           <p class="muted">Oversikt over familier som finnes i familiekode-registeret.</p>
         </div>
-        ${settingsBackButton()}
+        ${settingsBackButton("advanced")}
       </div>
       <div class="setup-note ${canRead ? "" : "warning-note"}">
         ${canRead
@@ -2853,7 +2893,7 @@ function settingsDataMigration() {
           <h2>Datamodell og migrering</h2>
           <p class="muted">Forbered neste Firestore-modell uten å flytte data ennå.</p>
         </div>
-        ${settingsBackButton()}
+        ${settingsBackButton("advanced")}
       </div>
       <div class="setup-note">
         Dagens modell lagrer hele familien i ett dokument: ${escapeText(cloudPathLabel())}. Neste modell bør dele opp barn, oppgaver, fullføringer og belønninger i egne samlinger når flere familier bruker appen.
