@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "68";
+const APP_VERSION = "69";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -63,6 +63,8 @@ const cloud = {
   backupLastRevision: 0,
   backupStatus: "",
   backupError: "",
+  mergeLastAt: null,
+  mergeLastSummary: "",
   applyingRemote: false
 };
 
@@ -2240,6 +2242,8 @@ function settingsCloud() {
       ${cloud.backupLastAt ? `<p class="small">Siste skybackup: ${formatDate(cloud.backupLastAt)} (rev. ${Number(cloud.backupLastRevision) || 0})</p>` : ""}
       ${cloud.backupStatus ? `<p class="small">Backup-status: ${escapeText(cloud.backupStatus)}</p>` : ""}
       ${cloud.backupError ? `<p class="small">Backup-feil: ${escapeText(cloud.backupError)}</p>` : ""}
+      ${cloud.mergeLastAt ? `<p class="small">Siste safe merge: ${formatDate(cloud.mergeLastAt)}</p>` : ""}
+      ${cloud.mergeLastSummary ? `<p class="small">Safe merge: ${escapeText(cloud.mergeLastSummary)}</p>` : ""}
       ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
       ${cloud.lastFetchedAt ? `<p class="small">Sist hentet fra sky: ${formatDate(cloud.lastFetchedAt)}</p>` : ""}
       ${state.syncDiagnostics?.lastTestAt ? `<p class="small">Siste synk-test: ${formatDate(state.syncDiagnostics.lastTestAt)} fra ${escapeText(state.syncDiagnostics.lastTestDevice || "ukjent enhet")}</p>` : ""}
@@ -3655,6 +3659,8 @@ function syncDiagnosisText() {
     `Skybackup revisjon: ${Number(cloud.backupLastRevision) || 0}`,
     `Skybackup status: ${cloud.backupStatus || "-"}`,
     `Skybackup feil: ${cloud.backupError || "ingen"}`,
+    `Siste safe merge: ${cloud.mergeLastAt ? formatDate(cloud.mergeLastAt) : "ingen"}`,
+    `Safe merge: ${cloud.mergeLastSummary || "ingen lokale endringer flettet"}`,
     `Migrert sky-sti: ${state.cloudMigration?.migratedAt ? `${state.cloudMigration.from} -> ${state.cloudMigration.to}` : "nei"}`,
     `Migreringsstatus: ${state.cloudMigration?.status || "ikke startet"}`,
     `Migreringsfeil: ${state.cloudMigration?.error || "ingen"}`,
@@ -4799,23 +4805,145 @@ function backupCloudState(reason, snapshotState) {
 
 function applyNewerCloudState(remoteState, remoteRevision, reason) {
   const now = new Date().toISOString();
+  const localBeforeMerge = state;
   backupCloudState(reason, state);
   cloud.applyingRemote = true;
-  const nextState = normalizeRemoteState(remoteState);
+  const mergeResult = reason === "stale-write-blocked"
+    ? safeMergeCloudState(localBeforeMerge, remoteState)
+    : { state: normalizeRemoteState(remoteState), changed: false, summary: "" };
+  const nextState = mergeResult.state;
   nextState.lastCloudSyncAt = now;
   state = nextState;
   cloud.remoteRevision = Math.max(Number(cloud.remoteRevision) || 0, Number(remoteRevision) || Number(state.cloudRevision) || 0);
   cloud.lastFetchedAt = now;
   cloud.staleWriteBlockedAt = reason === "stale-write-blocked" ? now : cloud.staleWriteBlockedAt;
   cloud.staleWriteMessage = reason === "stale-write-blocked"
-    ? "Denne enheten hadde eldre data. Nyeste familiedata er hentet fra skyen i stedet for å overskrive."
+    ? mergeResult.changed
+      ? "Denne enheten hadde eldre data. Nyeste skydata ble hentet, og nye lokale offline-endringer ble flettet inn."
+      : "Denne enheten hadde eldre data. Nyeste familiedata er hentet fra skyen i stedet for å overskrive."
     : cloud.staleWriteMessage;
+  if (mergeResult.changed) {
+    cloud.mergeLastAt = now;
+    cloud.mergeLastSummary = mergeResult.summary;
+    cloud.pendingSave = true;
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   cloud.applyingRemote = false;
   setCloudDocRef();
+  if (mergeResult.changed) queueCloudSave();
   if (reason === "stale-write-blocked") {
-    showToast("Eldre lokal data ble stoppet. Nyeste skydata er hentet.");
+    showToast(mergeResult.changed ? "Eldre data ble stoppet. Nye lokale endringer ble flettet inn." : "Eldre lokal data ble stoppet. Nyeste skydata er hentet.");
   }
+}
+
+function safeMergeCloudState(localState, remoteState) {
+  const normalizedRemote = normalizeRemoteState(remoteState);
+  const since = localState?.lastCloudSyncAt || localState?.updatedAt || localState?.createdAt || "";
+  const summary = [];
+  let changed = false;
+
+  const mergeNamed = (key, options = {}) => {
+    const result = mergeItemsById(normalizedRemote[key], localState?.[key], since, options);
+    normalizedRemote[key] = result.items;
+    if (result.added || result.updated) {
+      changed = true;
+      summary.push(`${result.added + result.updated} ${options.label || key}`);
+    }
+    return result;
+  };
+
+  const taskResult = mergeNamed("tasks", { label: "oppgaver", sortBy: "sortOrder" });
+  const rewardResult = mergeNamed("rewards", { label: "belønninger" });
+  mergeNamed("children", { label: "barn" });
+  mergeNamed("completions", { label: "fullføringer" });
+  mergeNamed("redemptions", { label: "belønninger i flyt" });
+  const transactionResult = mergeNamed("transactions", { label: "transaksjoner" });
+  mergeNamed("history", { label: "historikk" });
+  mergeNamed("badges", { label: "merker" });
+
+  if (transactionResult.addedItems.length) {
+    applyMergedTransactionsToChildren(normalizedRemote, transactionResult.addedItems);
+  }
+  if (taskResult.added || rewardResult.added) {
+    normalizedRemote.updatedAt = new Date().toISOString();
+  }
+
+  return {
+    state: normalizeLocalState(normalizedRemote, true),
+    changed,
+    summary: summary.length ? summary.join(", ") : ""
+  };
+}
+
+function mergeItemsById(remoteItems = [], localItems = [], since = "", options = {}) {
+  const remoteList = Array.isArray(remoteItems) ? remoteItems : [];
+  const localList = Array.isArray(localItems) ? localItems : [];
+  const merged = remoteList.map((item) => ({ ...item }));
+  const indexById = new Map(merged.map((item, index) => [item.id, index]));
+  const addedItems = [];
+  let added = 0;
+  let updated = 0;
+
+  localList.forEach((localItem) => {
+    if (!localItem?.id || !itemChangedAfter(localItem, since)) return;
+    const index = indexById.get(localItem.id);
+    if (index === undefined) {
+      const copy = { ...localItem };
+      merged.push(copy);
+      indexById.set(copy.id, merged.length - 1);
+      addedItems.push(copy);
+      added += 1;
+      return;
+    }
+    if (itemTime(localItem) > itemTime(merged[index])) {
+      merged[index] = { ...merged[index], ...localItem };
+      updated += 1;
+    }
+  });
+
+  if (options.sortBy) {
+    merged.sort((a, b) => (Number(a[options.sortBy]) || 0) - (Number(b[options.sortBy]) || 0));
+  }
+
+  return { items: merged, added, updated, addedItems };
+}
+
+function itemChangedAfter(item, since) {
+  if (!since) return true;
+  const changed = itemTime(item);
+  const cutoff = new Date(since).getTime();
+  return Number.isFinite(changed) && Number.isFinite(cutoff) && changed > cutoff;
+}
+
+function itemTime(item) {
+  const candidates = [
+    item?.updatedAt,
+    item?.completedAt,
+    item?.approvedAt,
+    item?.rejectedAt,
+    item?.reversedAt,
+    item?.requestedAt,
+    item?.fulfilledAt,
+    item?.refundedAt,
+    item?.awardedAt,
+    item?.createdAt
+  ];
+  const times = candidates
+    .map((value) => new Date(value || 0).getTime())
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return times.length ? Math.max(...times) : 0;
+}
+
+function applyMergedTransactionsToChildren(targetState, transactions) {
+  transactions.forEach((transaction) => {
+    const child = targetState.children?.find((item) => item.id === transaction.childId);
+    const points = Number(transaction.pointsChange) || 0;
+    if (!child || !points) return;
+    child.pointsBalance = Math.max(0, (Number(child.pointsBalance) || 0) + points);
+    if (points > 0 || transaction.type === "undo") {
+      child.lifetimePoints = Math.max(0, (Number(child.lifetimePoints) || 0) + points);
+    }
+  });
 }
 
 function subscribeCloudState() {
@@ -4893,7 +5021,7 @@ async function flushCloudSave() {
   if (!cloud.enabled || cloud.applyingRemote || !cloud.ready || !cloud.initialFetchComplete || !cloud.docRef || !cloud.setDoc) return;
   try {
     const result = await writeCloudState();
-    cloud.pendingSave = false;
+    cloud.pendingSave = Boolean(result?.stale && cloud.mergeLastAt);
     if (result?.saved) cloud.lastSavedAt = new Date().toISOString();
     cloud.error = "";
     render();
