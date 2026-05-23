@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "76";
+const APP_VERSION = "77";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -77,6 +77,9 @@ const cloud = {
   backupListStatus: "",
   backupRestoreStatus: "",
   backupRestoreError: "",
+  adminFamilies: [],
+  adminStatus: "",
+  adminError: "",
   applyingRemote: false
 };
 
@@ -2044,6 +2047,8 @@ function adultSettings() {
   if (view.settingsPage === "starter") return settingsStarterPackages();
   if (view.settingsPage === "levels") return settingsLevels();
   if (view.settingsPage === "cloud") return settingsCloud();
+  if (view.settingsPage === "admin") return settingsAdmin();
+  if (view.settingsPage === "migration") return settingsDataMigration();
   if (view.settingsPage === "reset") return settingsReset();
   return settingsMenu();
 }
@@ -2061,6 +2066,8 @@ function settingsMenu() {
     ["starter", "Startpakker", "Legg inn standard oppgaver og belønninger"],
     ["levels", "Nivåer", "Navn og grenser for livstidsstjerner"],
     ["cloud", "App, sky og diagnose", "Miljø, Firebase, synk og feilsøking"],
+    ["admin", "Drift/admin", "Oversikt over familier og skyhelse"],
+    ["migration", "Datamodell og migrering", "Plan og validering før neste Firestore-modell"],
     ["reset", "Nullstilling", "Start helt på nytt"]
   ];
   return `
@@ -2220,16 +2227,29 @@ function settingsBackup() {
       <div class="section-title compact-title">
         <div>
           <h2>Backup og flytting</h2>
-          <p class="muted">Eksporter før du flytter appen til nytt miljø.</p>
+          <p class="muted">Eksporter lokalt, hent skybackuper og sammenlign før du gjenoppretter.</p>
         </div>
         ${settingsBackButton()}
       </div>
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
         <button class="btn secondary" data-action="choose-import">Importer data</button>
+        <button class="btn secondary" data-action="list-cloud-backups">Hent skybackuper</button>
       </div>
       <input class="visually-hidden" id="import-file" type="file" accept="application/json,.json" data-import-file>
       <p class="small">Import erstatter dataene på denne enheten. Ta alltid eksport først.</p>
+      <div class="backup-restore-box">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Skybackup</h3>
+            <p class="muted">Se forskjeller, last ned JSON eller gjenopprett hele eller deler av en backup.</p>
+          </div>
+        </div>
+        ${cloud.backupListStatus ? `<p class="small">${escapeText(cloud.backupListStatus)}</p>` : ""}
+        ${cloud.backupRestoreStatus ? `<p class="small">Gjenoppretting: ${escapeText(cloud.backupRestoreStatus)}</p>` : ""}
+        ${cloud.backupRestoreError ? `<p class="small">Gjenopprettingsfeil: ${escapeText(cloud.backupRestoreError)}</p>` : ""}
+        ${cloud.backupList?.length ? cloudBackupList() : `<div class="empty">Ingen skybackuper hentet i denne økten.</div>`}
+      </div>
     </section>
   `;
 }
@@ -2370,8 +2390,12 @@ function cloudBackupList() {
             <strong>${escapeText(backup.reason || "Backup")}</strong>
             <p class="muted">${backup.createdAt ? formatDate(backup.createdAt) : "Ukjent tidspunkt"} · rev. ${Number(backup.cloudRevision) || 0}</p>
             <p class="small">${backupSummaryText(backup.state)} · ${escapeText(backup.id)}</p>
+            <p class="small">${backupDiffSummary(backup.state)}</p>
           </div>
-          <button class="btn warning" data-action="preview-cloud-backup" data-backup-id="${escapeAttr(backup.id)}" ${isCurrentOwner() ? "" : "disabled"}>Se og gjenopprett</button>
+          <div class="actions">
+            <button class="btn secondary" data-action="export-cloud-backup" data-backup-id="${escapeAttr(backup.id)}">Last ned JSON</button>
+            <button class="btn warning" data-action="preview-cloud-backup" data-backup-id="${escapeAttr(backup.id)}" ${isCurrentOwner() ? "" : "disabled"}>Sammenlign</button>
+          </div>
         </article>
       `).join("")}
     </div>
@@ -2418,6 +2442,70 @@ function backupSummaryText(snapshotState) {
   return `${snapshotState.children?.length || 0} barn · ${snapshotState.tasks?.length || 0} oppgaver · ${snapshotState.completions?.length || 0} fullføringer`;
 }
 
+function backupDiffSummary(snapshotState) {
+  const changes = compareStateSnapshots(state, snapshotState).filter((item) => item.changed);
+  if (!changes.length) return "Ingen tydelige forskjeller mot lokal data.";
+  return changes.slice(0, 3).map((item) => `${item.label}: ${item.current} nå / ${item.backup} i backup`).join(" · ");
+}
+
+function compareStateSnapshots(currentState = {}, backupState = {}) {
+  const rows = [
+    ["children", "Barn"],
+    ["tasks", "Oppgaver"],
+    ["rewards", "Belønninger"],
+    ["completions", "Fullføringer"],
+    ["transactions", "Transaksjoner"],
+    ["redemptions", "Belønninger i flyt"],
+    ["history", "Historikk"],
+    ["badges", "Merker"],
+    ["adultUsers", "Voksne"],
+    ["familyDevices", "Enheter"],
+    ["inviteCodes", "Invitasjoner"]
+  ].map(([key, label]) => {
+    const current = Array.isArray(currentState[key]) ? currentState[key].length : 0;
+    const backup = Array.isArray(backupState?.[key]) ? backupState[key].length : 0;
+    return { key, label, current, backup, changed: current !== backup };
+  });
+  rows.unshift({
+    key: "cloudRevision",
+    label: "Skyrevisjon",
+    current: Number(currentState.cloudRevision) || 0,
+    backup: Number(backupState?.cloudRevision) || 0,
+    changed: (Number(currentState.cloudRevision) || 0) !== (Number(backupState?.cloudRevision) || 0)
+  });
+  rows.unshift({
+    key: "updatedAt",
+    label: "Sist oppdatert",
+    current: currentState.updatedAt ? formatDate(currentState.updatedAt) : "-",
+    backup: backupState?.updatedAt ? formatDate(backupState.updatedAt) : "-",
+    changed: Boolean(currentState.updatedAt || backupState?.updatedAt) && currentState.updatedAt !== backupState?.updatedAt
+  });
+  return rows;
+}
+
+function backupDiffTable(snapshotState) {
+  const rows = compareStateSnapshots(state, snapshotState);
+  return `
+    <div class="table-wrap backup-diff">
+      <table>
+        <thead>
+          <tr><th>Område</th><th>Nå</th><th>Backup</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeText(row.label)}</td>
+              <td>${escapeText(row.current)}</td>
+              <td>${escapeText(row.backup)}</td>
+              <td><span class="pill ${row.changed ? "pending" : "done"}">${row.changed ? "Forskjell" : "Lik"}</span></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function restoreBackupModal(backupId) {
   const backup = cloud.backupList.find((item) => item.id === backupId);
   if (!backup) return "";
@@ -2442,6 +2530,19 @@ function restoreBackupModal(backupId) {
           <div><strong>Familie</strong><span>${escapeText(snapshot.familyName || backup.familyName || "-")}</span></div>
           <div><strong>Innhold</strong><span>${backupSummaryText(snapshot)}</span></div>
         </div>
+        <h3>Sammenligning</h3>
+        ${backupDiffTable(snapshot)}
+        <div class="field">
+          <label>Hva skal gjenopprettes?</label>
+          <select name="restoreScope">
+            <option value="full">Hele familien</option>
+            <option value="tasks">Bare oppgaver</option>
+            <option value="rewards">Bare belønninger</option>
+            <option value="children">Bare barn/profiler</option>
+            <option value="activity">Fullføringer, stjerner og historikk</option>
+          </select>
+          <small>Ved delvis gjenoppretting beholdes resten av dagens data.</small>
+        </div>
         <div class="field">
           <label>Voksen-PIN</label>
           <input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus>
@@ -2449,11 +2550,212 @@ function restoreBackupModal(backupId) {
         </div>
         <div class="actions" style="margin-top:14px">
           <button class="btn warning" type="submit">Gjenopprett backup</button>
+          <button class="btn secondary" type="button" data-action="export-cloud-backup" data-backup-id="${escapeAttr(backupId)}">Last ned JSON</button>
           <button class="btn secondary" type="button" data-action="close-restore-backup">Avbryt</button>
         </div>
       </form>
     </div>
   `;
+}
+
+function settingsAdmin() {
+  const canRead = isCurrentOwner();
+  return `
+    <section class="panel">
+      <div class="section-title compact-title">
+        <div>
+          <h2>Drift/admin</h2>
+          <p class="muted">Oversikt over familier som finnes i familiekode-registeret.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      <div class="setup-note ${canRead ? "" : "warning-note"}">
+        ${canRead
+          ? "Denne visningen leser driftsmetadata fra familyCodes. Den endrer ikke familiedata."
+          : "Logg inn som Google-eier for å hente adminoversikt."}
+      </div>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent familier</button>
+        <button class="btn secondary" data-action="copy-admin-summary" ${cloud.adminFamilies.length ? "" : "disabled"}>Kopier oversikt</button>
+      </div>
+      ${cloud.adminStatus ? `<p class="small">${escapeText(cloud.adminStatus)}</p>` : ""}
+      ${cloud.adminError ? `<p class="small">Admin-feil: ${escapeText(cloud.adminError)}</p>` : ""}
+      ${cloud.adminFamilies.length ? adminFamilyTable() : `<div class="empty">Ingen familier hentet i denne økten.</div>`}
+    </section>
+  `;
+}
+
+function adminFamilyTable() {
+  return `
+    <div class="table-wrap admin-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Familie</th>
+            <th>App</th>
+            <th>Siste synk</th>
+            <th>Rev.</th>
+            <th>Innhold</th>
+            <th>Backup</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${cloud.adminFamilies.map((family) => `
+            <tr>
+              <td>
+                <strong>${escapeText(family.familyName || "-")}</strong>
+                <div class="small">${escapeText(family.cloudFamilyId || family.familyId || "-")}</div>
+                <div class="small">${escapeText(family.code || family.id || "-")}</div>
+              </td>
+              <td>${escapeText(family.appVersion || "-")}</td>
+              <td>${formatMaybeDate(family.lastCloudSyncAt || family.updatedAt)}</td>
+              <td>${Number(family.cloudRevision) || 0}</td>
+              <td>${Number(family.childrenCount) || 0} barn<br>${Number(family.tasksCount) || 0} oppg.<br>${Number(family.completionsCount) || 0} fullf.</td>
+              <td>${family.lastBackupAt ? formatMaybeDate(family.lastBackupAt) : "-"}<br>rev. ${Number(family.lastBackupRevision) || 0}</td>
+              <td><span class="pill ${adminFamilyStatusClass(family)}">${escapeText(adminFamilyStatusLabel(family))}</span></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function adminFamilyStatusClass(family) {
+  if (family.error || family.lastError) return "rejected";
+  if (!family.lastCloudSyncAt && !family.updatedAt) return "pending";
+  return "done";
+}
+
+function adminFamilyStatusLabel(family) {
+  if (family.error || family.lastError) return family.error || family.lastError;
+  if (!family.lastCloudSyncAt && !family.updatedAt) return "Mangler synk";
+  return "OK";
+}
+
+function settingsDataMigration() {
+  const plan = migrationPlanItems();
+  const checks = migrationReadinessChecks();
+  const ready = checks.every((item) => item.ok);
+  return `
+    <section class="panel">
+      <div class="section-title compact-title">
+        <div>
+          <h2>Datamodell og migrering</h2>
+          <p class="muted">Forbered neste Firestore-modell uten å flytte data ennå.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      <div class="setup-note">
+        Dagens modell lagrer hele familien i ett dokument: ${escapeText(cloudPathLabel())}. Neste modell bør dele opp barn, oppgaver, fullføringer og belønninger i egne samlinger når flere familier bruker appen.
+      </div>
+      <div class="ops-grid">
+        <article class="ops-card">
+          <strong>Dagens modell</strong>
+          <p class="muted">Én samlet appState med cloudRevision, backup og stale-write-vern.</p>
+          <span class="pill done">I drift</span>
+        </article>
+        <article class="ops-card">
+          <strong>Neste modell</strong>
+          <p class="muted">families/{id}/children, tasks, completions, rewards, redemptions og settings.</p>
+          <span class="pill pending">Planlagt</span>
+        </article>
+        <article class="ops-card">
+          <strong>Klarhet</strong>
+          <p class="muted">${ready ? "Data ser klar ut for en fremtidig testmigrering." : "Noen punkter bør ryddes før migrering."}</p>
+          <span class="pill ${ready ? "done" : "pending"}">${ready ? "Klar" : "Må sjekkes"}</span>
+        </article>
+      </div>
+      <h3>Validering</h3>
+      <div class="checklist migration-checklist">
+        ${checks.map((item) => `
+          <div class="check-item ${item.ok ? "done" : "pending"}">
+            <span>${item.ok ? "✓" : "!"}</span>
+            <div>
+              <strong>${escapeText(item.title)}</strong>
+              <small>${escapeText(item.description)}</small>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <h3>Migreringsplan</h3>
+      <div class="migration-plan">
+        ${plan.map((item, index) => `
+          <article class="migration-step">
+            <span>${index + 1}</span>
+            <div>
+              <strong>${escapeText(item.title)}</strong>
+              <p class="muted">${escapeText(item.description)}</p>
+            </div>
+          </article>
+        `).join("")}
+      </div>
+      <div class="actions" style="margin-top:14px">
+        <button class="btn secondary" data-action="copy-migration-report">Kopier migreringsrapport</button>
+      </div>
+    </section>
+  `;
+}
+
+function migrationReadinessChecks() {
+  const ids = new Set();
+  const duplicateTaskIds = (state.tasks || []).some((task) => {
+    if (!task.id) return true;
+    if (ids.has(task.id)) return true;
+    ids.add(task.id);
+    return false;
+  });
+  return [
+    {
+      title: "Familie har stabil sky-sti",
+      description: cloudFamilyId() && cloudFamilyId() === suggestedCloudFamilyId()
+        ? `Bruker ${cloudFamilyId()}.`
+        : `Anbefalt sti er ${suggestedCloudFamilyId()}.`,
+      ok: Boolean(cloudFamilyId()) && cloudFamilyId() === suggestedCloudFamilyId()
+    },
+    {
+      title: "Første skyhent er ferdig",
+      description: cloud.initialFetchComplete ? "Denne enheten har hentet skydata i økten." : "Vent til skydata er hentet før migrering planlegges.",
+      ok: cloud.initialFetchComplete
+    },
+    {
+      title: "Revisjonsvern er aktivt",
+      description: Number(state.cloudRevision) > 0 ? `Lokal revisjon ${Number(state.cloudRevision)}.` : "Mangler skyrevisjon.",
+      ok: Number(state.cloudRevision) > 0
+    },
+    {
+      title: "Oppgave-id-er er unike",
+      description: duplicateTaskIds ? "Fant manglende eller dupliserte oppgave-id-er." : `${state.tasks?.length || 0} oppgaver har unike id-er.`,
+      ok: !duplicateTaskIds
+    },
+    {
+      title: "Backup finnes",
+      description: cloud.backupLastAt || cloud.backupList?.length ? "Backup er registrert i denne økten." : "Hent eller lag en backup før migrering.",
+      ok: Boolean(cloud.backupLastAt || cloud.backupList?.length)
+    }
+  ];
+}
+
+function migrationPlanItems() {
+  return [
+    {
+      title: "Frys dagens appState som backup",
+      description: "Skriv en skybackup rett før migreringen starter, slik at hele familien kan rulles tilbake."
+    },
+    {
+      title: "Opprett nye samlinger parallelt",
+      description: "Skriv barn, oppgaver, belønninger, fullføringer og innstillinger til egne Firestore-samlinger uten å slette appState."
+    },
+    {
+      title: "Les fra ny modell i testmodus",
+      description: "La appen validere at ny modell gir samme tall som gammel modell før produksjon slås over."
+    },
+    {
+      title: "Slå over familie for familie",
+      description: "Bruk en migreringsstatus per familie slik at én familie kan testes før flere følger etter."
+    }
+  ];
 }
 
 function settingsReset() {
@@ -3050,11 +3352,15 @@ function exportState() {
     firebaseProjectId: APP_CONFIG.cloudSync.firebase?.projectId || null,
     state
   };
+  downloadJson(payload, `familieoppdrag-${state.familyId || "backup"}-${dateKey()}.json`);
+}
+
+function downloadJson(payload, filename) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `familieoppdrag-${state.familyId || "backup"}-${dateKey()}.json`;
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -3581,6 +3887,14 @@ function weekId(date = new Date()) {
 
 function formatDate(value) {
   return new Intl.DateTimeFormat("no-NO", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+}
+
+function formatMaybeDate(value) {
+  if (!value) return "-";
+  if (typeof value?.toDate === "function") return formatDate(value.toDate());
+  if (typeof value?.seconds === "number") return formatDate(new Date(value.seconds * 1000));
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : formatDate(date);
 }
 
 function addDays(value, days) {
@@ -4554,7 +4868,7 @@ function sameText(a, b) {
 app.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
-  const { action, child, task, reward, id, tab } = button.dataset;
+  const { action, child, task, reward, id, tab, backupId } = button.dataset;
   const scrollActions = new Set([
     "home",
     "setup-next",
@@ -4775,8 +5089,11 @@ app.addEventListener("click", (event) => {
   }
   if (action === "preview-cloud-backup") {
     if (!requireOwnerAccess("Bare Google-eier kan gjenopprette skybackup.")) return;
-    view.restoreBackupId = button.dataset.backupId;
+    view.restoreBackupId = backupId;
     render();
+  }
+  if (action === "export-cloud-backup") {
+    exportCloudBackup(backupId);
   }
   if (action === "close-restore-backup") {
     view.restoreBackupId = null;
@@ -4794,6 +5111,15 @@ app.addEventListener("click", (event) => {
   if (action === "settings-page") {
     view.settingsPage = button.dataset.page || "menu";
     render();
+  }
+  if (action === "load-admin-families") {
+    loadAdminFamilies();
+  }
+  if (action === "copy-admin-summary") {
+    copyAdminSummary();
+  }
+  if (action === "copy-migration-report") {
+    copyMigrationReport();
   }
   if (action === "copy-family-link") {
     copyFamilyLink();
@@ -5300,6 +5626,102 @@ async function listCloudBackups() {
   }
 }
 
+async function loadAdminFamilies() {
+  if (!isCurrentOwner()) {
+    showToast("Bare Google-eier kan hente adminoversikt.");
+    return;
+  }
+  if (!cloud.ready || !cloud.getDocs || !cloud.collection) {
+    showToast("Skyen er ikke klar ennå.");
+    return;
+  }
+  try {
+    cloud.adminStatus = "Henter familier ...";
+    cloud.adminError = "";
+    render();
+    const collectionName = APP_CONFIG.cloudSync.codeCollection || "familyCodes";
+    const collectionRef = cloud.collection(cloud.db, collectionName);
+    const snapshot = await cloud.getDocs(collectionRef);
+    const families = (snapshot.docs || [])
+      .map((doc) => ({ id: doc.id, ...(doc.data() || {}) }))
+      .sort((a, b) => comparableDateValue(b.lastCloudSyncAt || b.updatedAt) - comparableDateValue(a.lastCloudSyncAt || a.updatedAt));
+    cloud.adminFamilies = families;
+    cloud.adminStatus = families.length ? `Fant ${families.length} familie(r) i ${collectionName}.` : `Ingen familier funnet i ${collectionName}.`;
+    showToast(families.length ? "Adminoversikt hentet." : "Ingen familier funnet.");
+    render();
+  } catch (error) {
+    cloud.adminStatus = "Kunne ikke hente adminoversikt.";
+    cloud.adminError = error?.message || "Lesing fra familyCodes feilet.";
+    showToast("Kunne ikke hente adminoversikt.");
+    render();
+  }
+}
+
+function comparableDateValue(value) {
+  if (!value) return 0;
+  if (typeof value?.toDate === "function") return value.toDate().getTime();
+  if (typeof value?.seconds === "number") return value.seconds * 1000;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+async function copyAdminSummary() {
+  const text = adminSummaryText();
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Adminoversikt kopiert.");
+  } catch {
+    prompt("Kopier adminoversikt:", text);
+  }
+}
+
+function adminSummaryText() {
+  return [
+    `Adminoversikt: ${APP_CONFIG.appName}`,
+    `Hentet: ${new Date().toISOString()}`,
+    `Antall familier: ${cloud.adminFamilies.length}`,
+    ...cloud.adminFamilies.map((family) => [
+      "",
+      `Familie: ${family.familyName || "-"}`,
+      `Familie-id: ${family.cloudFamilyId || family.familyId || "-"}`,
+      `Kode: ${family.code || family.id || "-"}`,
+      `Appversjon: ${family.appVersion || "-"}`,
+      `Siste synk: ${formatMaybeDate(family.lastCloudSyncAt || family.updatedAt)}`,
+      `Skyrevisjon: ${Number(family.cloudRevision) || 0}`,
+      `Barn/oppgaver/fullføringer: ${Number(family.childrenCount) || 0}/${Number(family.tasksCount) || 0}/${Number(family.completionsCount) || 0}`,
+      `Backup: ${family.lastBackupAt ? formatMaybeDate(family.lastBackupAt) : "-"} rev. ${Number(family.lastBackupRevision) || 0}`,
+      `Status: ${adminFamilyStatusLabel(family)}`
+    ].join("\n"))
+  ].join("\n");
+}
+
+async function copyMigrationReport() {
+  const text = migrationReportText();
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Migreringsrapport kopiert.");
+  } catch {
+    prompt("Kopier migreringsrapport:", text);
+  }
+}
+
+function migrationReportText() {
+  return [
+    `Migreringsrapport: ${APP_CONFIG.appName}`,
+    `Versjon: ${APP_VERSION}`,
+    `Familie-id: ${cloudFamilyId()}`,
+    `Datamodell: ${state.schemaVersion || SCHEMA_VERSION}`,
+    `Skyrevisjon: ${Number(state.cloudRevision) || 0}`,
+    `Sist synk: ${state.lastCloudSyncAt ? formatDate(state.lastCloudSyncAt) : "-"}`,
+    "",
+    "Validering:",
+    ...migrationReadinessChecks().map((item) => `${item.ok ? "OK" : "SJEKK"} - ${item.title}: ${item.description}`),
+    "",
+    "Plan:",
+    ...migrationPlanItems().map((item, index) => `${index + 1}. ${item.title}: ${item.description}`)
+  ].join("\n");
+}
+
 async function restoreCloudBackupFromForm(form) {
   if (!isCurrentOwner()) {
     showToast("Bare Google-eier kan gjenopprette backup.");
@@ -5311,10 +5733,10 @@ async function restoreCloudBackupFromForm(form) {
     showToast("Feil PIN.");
     return;
   }
-  await restoreCloudBackup(data.get("backupId"));
+  await restoreCloudBackup(data.get("backupId"), data.get("restoreScope") || "full");
 }
 
-async function restoreCloudBackup(backupId) {
+async function restoreCloudBackup(backupId, scope = "full") {
   if (!backupId || !cloud.ready || !cloud.getDoc || !cloud.setDoc) {
     showToast("Skyen er ikke klar ennå.");
     return;
@@ -5324,7 +5746,7 @@ async function restoreCloudBackup(backupId) {
     showToast("Bare Google-eier kan gjenopprette backup.");
     return;
   }
-  const ok = confirm(`Siste sjekk: Vil du gjenopprette backupen ${backupMeta?.createdAt ? formatDate(backupMeta.createdAt) : backupId}? Nåværende skydata blir sikkerhetskopiert først.`);
+  const ok = confirm(`Siste sjekk: Vil du gjenopprette ${restoreScopeLabel(scope)} fra backupen ${backupMeta?.createdAt ? formatDate(backupMeta.createdAt) : backupId}? Nåværende skydata blir sikkerhetskopiert først.`);
   if (!ok) return;
   try {
     cloud.backupRestoreStatus = "Gjenoppretter backup ...";
@@ -5347,7 +5769,7 @@ async function restoreCloudBackup(backupId) {
     const now = new Date().toISOString();
     const nextRevision = Math.max(Number(state.cloudRevision) || 0, Number(cloud.remoteRevision) || 0, Number(currentRemoteState?.cloudRevision) || 0) + 1;
     const restoredState = normalizeLocalState({
-      ...backup.state,
+      ...stateWithBackupScope(state, backup.state, scope),
       cloudRevision: nextRevision,
       lastCloudSyncAt: now,
       updatedAt: now
@@ -5358,6 +5780,7 @@ async function restoreCloudBackup(backupId) {
       state: restoredState,
       cloudRevision: nextRevision,
       restoredFromBackup: backupId,
+      restoredScope: scope,
       updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
     }, { merge: true });
     cloud.applyingRemote = true;
@@ -5365,7 +5788,7 @@ async function restoreCloudBackup(backupId) {
     cloud.remoteRevision = nextRevision;
     cloud.lastSavedAt = now;
     cloud.lastFetchedAt = now;
-    cloud.backupRestoreStatus = `Gjenopprettet ${backupId} som rev. ${nextRevision}.`;
+    cloud.backupRestoreStatus = `Gjenopprettet ${restoreScopeLabel(scope)} fra ${backupId} som rev. ${nextRevision}.`;
     view.restoreBackupId = null;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     cloud.applyingRemote = false;
@@ -5379,6 +5802,59 @@ async function restoreCloudBackup(backupId) {
     showToast("Kunne ikke gjenopprette backup.");
     render();
   }
+}
+
+function stateWithBackupScope(currentState, backupState, scope) {
+  const normalizedBackup = normalizeLocalState(backupState || {}, true);
+  const base = normalizeLocalState(currentState || {}, true);
+  if (scope === "tasks") {
+    return { ...base, tasks: normalizedBackup.tasks };
+  }
+  if (scope === "rewards") {
+    return { ...base, rewards: normalizedBackup.rewards };
+  }
+  if (scope === "children") {
+    return { ...base, children: normalizedBackup.children };
+  }
+  if (scope === "activity") {
+    return {
+      ...base,
+      children: normalizedBackup.children,
+      completions: normalizedBackup.completions,
+      transactions: normalizedBackup.transactions,
+      history: normalizedBackup.history,
+      badges: normalizedBackup.badges,
+      redemptions: normalizedBackup.redemptions
+    };
+  }
+  return normalizedBackup;
+}
+
+function restoreScopeLabel(scope) {
+  return {
+    tasks: "oppgaver",
+    rewards: "belønninger",
+    children: "barn/profiler",
+    activity: "fullføringer, stjerner og historikk",
+    full: "hele familien"
+  }[scope] || "hele familien";
+}
+
+function exportCloudBackup(backupId) {
+  const backup = cloud.backupList.find((item) => item.id === backupId);
+  if (!backup) {
+    showToast("Fant ikke backupen i listen.");
+    return;
+  }
+  downloadJson({
+    exportedAt: new Date().toISOString(),
+    appName: APP_CONFIG.appName,
+    appVersion: APP_VERSION,
+    environment: APP_CONFIG.environment,
+    firebaseProjectId: APP_CONFIG.cloudSync.firebase?.projectId || null,
+    backup
+  }, `familieoppdrag-skybackup-${backupId}-${dateKey()}.json`);
+  showToast("Skybackup lastet ned.");
 }
 
 function remoteStateTime(remoteState) {

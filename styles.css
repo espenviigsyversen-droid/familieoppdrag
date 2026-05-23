@@ -1318,7 +1318,83 @@ button:disabled {
 }
 
 .restore-modal {
-  width: min(560px, 100%);
+  width: min(820px, 100%);
+  max-height: min(86svh, 840px);
+  overflow: auto;
+}
+
+.backup-diff {
+  margin: 10px 0 14px;
+}
+
+.admin-table td {
+  vertical-align: top;
+}
+
+.migration-checklist {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.check-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.check-item > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  font-weight: 900;
+  background: rgba(255, 183, 3, 0.16);
+  color: #925600;
+}
+
+.check-item.done > span {
+  background: rgba(6, 214, 160, 0.16);
+  color: #007a68;
+}
+
+.check-item small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.migration-plan {
+  display: grid;
+  gap: 10px;
+}
+
+.migration-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.migration-step > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: rgba(108, 99, 255, 0.12);
+  color: var(--primary-dark);
+  font-weight: 900;
 }
 
 .tabs {
