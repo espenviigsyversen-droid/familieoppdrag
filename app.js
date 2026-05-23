@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "67";
+const APP_VERSION = "68";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -59,6 +59,10 @@ const cloud = {
   remoteRevision: 0,
   staleWriteBlockedAt: null,
   staleWriteMessage: "",
+  backupLastAt: null,
+  backupLastRevision: 0,
+  backupStatus: "",
+  backupError: "",
   applyingRemote: false
 };
 
@@ -2233,6 +2237,9 @@ function settingsCloud() {
       <p class="small">Siste sky-revisjon sett: ${Number(cloud.remoteRevision) || 0}</p>
       ${cloud.staleWriteBlockedAt ? `<p class="small">Sist blokkert gammel lagring: ${formatDate(cloud.staleWriteBlockedAt)}</p>` : ""}
       ${cloud.staleWriteMessage ? `<p class="small">Synkvern: ${escapeText(cloud.staleWriteMessage)}</p>` : ""}
+      ${cloud.backupLastAt ? `<p class="small">Siste skybackup: ${formatDate(cloud.backupLastAt)} (rev. ${Number(cloud.backupLastRevision) || 0})</p>` : ""}
+      ${cloud.backupStatus ? `<p class="small">Backup-status: ${escapeText(cloud.backupStatus)}</p>` : ""}
+      ${cloud.backupError ? `<p class="small">Backup-feil: ${escapeText(cloud.backupError)}</p>` : ""}
       ${cloud.lastSavedAt ? `<p class="small">Sist lagret til sky: ${formatDate(cloud.lastSavedAt)}</p>` : ""}
       ${cloud.lastFetchedAt ? `<p class="small">Sist hentet fra sky: ${formatDate(cloud.lastFetchedAt)}</p>` : ""}
       ${state.syncDiagnostics?.lastTestAt ? `<p class="small">Siste synk-test: ${formatDate(state.syncDiagnostics.lastTestAt)} fra ${escapeText(state.syncDiagnostics.lastTestDevice || "ukjent enhet")}</p>` : ""}
@@ -3644,6 +3651,10 @@ function syncDiagnosisText() {
     `Første sky-hent ferdig: ${cloud.initialFetchComplete ? "ja" : "nei"}`,
     `Sist blokkert gammel lagring: ${cloud.staleWriteBlockedAt ? formatDate(cloud.staleWriteBlockedAt) : "ingen"}`,
     `Synkvern: ${cloud.staleWriteMessage || "ingen blokkering"}`,
+    `Siste skybackup: ${cloud.backupLastAt ? formatDate(cloud.backupLastAt) : "ingen i denne økten"}`,
+    `Skybackup revisjon: ${Number(cloud.backupLastRevision) || 0}`,
+    `Skybackup status: ${cloud.backupStatus || "-"}`,
+    `Skybackup feil: ${cloud.backupError || "ingen"}`,
     `Migrert sky-sti: ${state.cloudMigration?.migratedAt ? `${state.cloudMigration.from} -> ${state.cloudMigration.to}` : "nei"}`,
     `Migreringsstatus: ${state.cloudMigration?.status || "ikke startet"}`,
     `Migreringsfeil: ${state.cloudMigration?.error || "ingen"}`,
@@ -3737,6 +3748,10 @@ async function migrateCloudFamilyPath() {
 
   try {
     cloud.applyingRemote = true;
+    await writeCloudBackup("before-cloud-migration", state, Number(state.cloudRevision) || 0, fromFamilyId).catch((error) => {
+      cloud.backupError = error?.message || "Kunne ikke lagre backup før flytting.";
+      console.warn("Cloud migration backup failed:", error);
+    });
     const targetDocRef = cloudDocRefForFamily(toFamilyId);
     await cloud.setDoc(targetDocRef, {
       familyId: toFamilyId,
@@ -4717,6 +4732,49 @@ function cloudDocRefForFamily(familyId) {
   );
 }
 
+function cloudBackupDocRefForFamily(familyId, backupId) {
+  const config = APP_CONFIG.cloudSync;
+  return cloud.doc(
+    cloud.db,
+    config.stateCollection,
+    familyId,
+    "backups",
+    backupId
+  );
+}
+
+function cloudBackupId(reason, revision, createdAt) {
+  const safeReason = slugify(reason || "backup") || "backup";
+  if (revision > 0) return `rev-${revision}-${safeReason}`;
+  return `legacy-${createdAt.replace(/\D/g, "").slice(0, 14)}-${safeReason}`;
+}
+
+function cloudBackupPayload(reason, snapshotState, revision, createdAt) {
+  return {
+    reason,
+    familyId: snapshotState?.familyId || state.familyId || "local-family",
+    cloudFamilyId: snapshotState?.cloudFamilyId || cloudFamilyId(),
+    familyName: snapshotState?.familyName || state.familyName || "",
+    cloudRevision: Number(revision) || Number(snapshotState?.cloudRevision) || 0,
+    appVersion: APP_VERSION,
+    createdAt,
+    state: snapshotState
+  };
+}
+
+async function writeCloudBackup(reason, snapshotState, revision = Number(snapshotState?.cloudRevision) || 0, familyId = cloudFamilyId()) {
+  if (!cloud.setDoc || !cloud.doc || !cloud.db || !snapshotState) return null;
+  const createdAt = new Date().toISOString();
+  const backupId = cloudBackupId(reason, Number(revision) || 0, createdAt);
+  const backupRef = cloudBackupDocRefForFamily(familyId, backupId);
+  await cloud.setDoc(backupRef, cloudBackupPayload(reason, snapshotState, revision, createdAt), { merge: false });
+  cloud.backupLastAt = createdAt;
+  cloud.backupLastRevision = Number(revision) || Number(snapshotState?.cloudRevision) || 0;
+  cloud.backupStatus = `Lagret ${backupId}`;
+  cloud.backupError = "";
+  return backupId;
+}
+
 function remoteStateTime(remoteState) {
   const time = new Date(remoteState?.updatedAt || remoteState?.createdAt || 0).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -4865,6 +4923,15 @@ async function writeCloudState() {
         return { saved: false, stale: true, remoteState, remoteRevision };
       }
       const nextRevision = Math.max(localRevision, remoteRevision) + 1;
+      let backupId = null;
+      if (remoteState) {
+        backupId = cloudBackupId("before-cloud-write", remoteRevision, now);
+        transaction.set(
+          cloudBackupDocRefForFamily(cloudFamilyId(), backupId),
+          cloudBackupPayload("before-cloud-write", remoteState, remoteRevision, now),
+          { merge: false }
+        );
+      }
       const nextState = {
         ...state,
         cloudRevision: nextRevision,
@@ -4878,7 +4945,7 @@ async function writeCloudState() {
         cloudRevision: nextRevision,
         updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
       }, { merge: true });
-      return { saved: true, nextState, nextRevision };
+      return { saved: true, nextState, nextRevision, backupId, backupRevision: remoteRevision };
     });
     if (result.stale) {
       applyNewerCloudState(result.remoteState, result.remoteRevision, "stale-write-blocked");
@@ -4887,6 +4954,12 @@ async function writeCloudState() {
     if (result.saved) {
       state = normalizeLocalState(result.nextState, true);
       cloud.remoteRevision = result.nextRevision;
+      if (result.backupId) {
+        cloud.backupLastAt = now;
+        cloud.backupLastRevision = result.backupRevision;
+        cloud.backupStatus = `Lagret ${result.backupId}`;
+        cloud.backupError = "";
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
   } else {
@@ -4898,6 +4971,9 @@ async function writeCloudState() {
       return { saved: false, stale: true };
     }
     const nextRevision = Math.max(localRevision, remoteRevision) + 1;
+    if (remoteState) {
+      await writeCloudBackup("before-cloud-write", remoteState, remoteRevision);
+    }
     state = normalizeLocalState({
       ...state,
       cloudRevision: nextRevision,
