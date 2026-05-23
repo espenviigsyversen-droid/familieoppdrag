@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "81";
+const APP_VERSION = "82";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -2569,7 +2569,7 @@ function settingsPilotShare() {
           </div>
           <button class="btn" data-action="copy-pilot-message">Kopier tekst</button>
         </div>
-        <textarea class="copy-textarea" readonly>${escapeText(text)}</textarea>
+        <textarea class="copy-textarea" data-pilot-message>${escapeText(text)}</textarea>
       </section>
       <section class="panel">
         <div class="section-title compact-title">
@@ -5009,7 +5009,7 @@ async function copyNewFamilyStartLink() {
 }
 
 async function copyPilotMessage() {
-  const text = pilotShareText();
+  const text = document.querySelector("[data-pilot-message]")?.value || pilotShareText();
   try {
     await navigator.clipboard.writeText(text);
     showToast("Pilottekst kopiert.");
