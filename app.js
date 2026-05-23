@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "88";
+const APP_VERSION = "90";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -3067,6 +3067,7 @@ function settingsAdmin() {
       `}
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent driftsstatus</button>
+        <button class="btn secondary" data-action="force-cloud-save">Oppdater min families status</button>
         <button class="btn secondary" data-action="load-current-admin-family">Vis denne familien</button>
         <button class="btn secondary" data-action="copy-admin-summary" ${cloud.adminFamilies.length ? "" : "disabled"}>Kopier oversikt</button>
       </div>
@@ -3127,7 +3128,8 @@ function adminFamilyTable() {
 function adminFamilyStatusClass(family) {
   if (family.error || family.lastError) return "rejected";
   if (appVersionNumber(family.appVersion) < appVersionNumber(family.minSupportedAppVersion || MIN_SUPPORTED_APP_VERSION)) return "warning";
-  if (family.pendingSave) return "pending";
+  if (appVersionNumber(family.appVersion) < appVersionNumber(APP_VERSION)) return "warning";
+  if (family.pendingSave && !family.lastCloudSyncAt) return "pending";
   if (!family.lastCloudSyncAt && !family.updatedAt) return "pending";
   return "done";
 }
@@ -3135,7 +3137,8 @@ function adminFamilyStatusClass(family) {
 function adminFamilyStatusLabel(family) {
   if (family.error || family.lastError) return family.error || family.lastError;
   if (appVersionNumber(family.appVersion) < appVersionNumber(family.minSupportedAppVersion || MIN_SUPPORTED_APP_VERSION)) return "Bør oppdatere";
-  if (family.pendingSave) return "Venter på lagring";
+  if (appVersionNumber(family.appVersion) < appVersionNumber(APP_VERSION)) return "Ny versjon finnes";
+  if (family.pendingSave && !family.lastCloudSyncAt) return "Venter på lagring";
   if (!family.lastCloudSyncAt && !family.updatedAt) return "Mangler synk";
   return "OK";
 }
@@ -3557,16 +3560,9 @@ function hideChildReward(id) {
 async function refreshApp() {
   showToast("Oppdaterer appen ...");
   try {
-    if ("serviceWorker" in navigator) {
-      const registration = await navigator.serviceWorker.getRegistration();
-      if (registration) await registration.update();
-    }
-    if ("caches" in window) {
-      const keys = await caches.keys();
-      await Promise.all(keys.filter((key) => key.startsWith("familieoppdrag-")).map((key) => caches.delete(key)));
-    }
+    await hardRefreshAppShell();
   } finally {
-    window.setTimeout(() => window.location.reload(), 500);
+    window.setTimeout(() => reloadWithoutAppCache(), 500);
   }
 }
 
@@ -3578,18 +3574,37 @@ async function applyAppUpdate() {
     if (cloud.pendingSave) {
       await flushCloudSave();
     }
-    const registration = view.serviceWorkerRegistration || ("serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : null);
-    const waiting = view.serviceWorkerWaiting || registration?.waiting;
-    if (waiting) {
-      waiting.postMessage({ type: "SKIP_WAITING" });
-      window.setTimeout(() => window.location.reload(), 1800);
-      return;
-    }
-    if (registration) await registration.update();
+    await hardRefreshAppShell();
   } catch (error) {
     console.warn("Could not apply app update:", error);
   }
-  window.setTimeout(() => window.location.reload(), 500);
+  window.setTimeout(() => reloadWithoutAppCache(), 500);
+}
+
+async function hardRefreshAppShell() {
+  if ("serviceWorker" in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map(async (registration) => {
+      try {
+        await registration.update();
+        const waiting = registration.waiting || registration.installing;
+        waiting?.postMessage?.({ type: "SKIP_WAITING" });
+        await registration.unregister();
+      } catch (error) {
+        console.warn("Could not reset service worker:", error);
+      }
+    }));
+  }
+  if ("caches" in window) {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => key.startsWith("familieoppdrag-")).map((key) => caches.delete(key)));
+  }
+}
+
+function reloadWithoutAppCache() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("appRefresh", Date.now().toString());
+  window.location.replace(url.toString());
 }
 
 function markAppUpdateAvailable(registration) {
