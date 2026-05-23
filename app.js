@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "75";
+const APP_VERSION = "76";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -4960,6 +4960,8 @@ app.addEventListener("submit", async (event) => {
 
 async function initFirebaseSync() {
   if (!cloud.enabled) return;
+  const startupUpdatedAt = state.updatedAt || "";
+  const startupRevision = Number(state.cloudRevision) || 0;
   try {
     view.bootMessage = "Kobler til Firestore";
     render();
@@ -5026,12 +5028,26 @@ async function initFirebaseSync() {
     if (remoteState) {
       cloud.lastFetchedAt = new Date().toISOString();
       cloud.applyingRemote = true;
-      state = normalizeRemoteState(remoteState);
-      cloud.remoteRevision = Number(state.cloudRevision) || 0;
-      state.lastCloudSyncAt = cloud.lastFetchedAt;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      cloud.applyingRemote = false;
-      setCloudDocRef();
+      try {
+        const localChangedDuringStartup = cloud.pendingSave
+          || (state.updatedAt || "") !== startupUpdatedAt
+          || (Number(state.cloudRevision) || 0) > startupRevision;
+        const mergeResult = localChangedDuringStartup
+          ? safeMergeCloudState(state, remoteState)
+          : { state: normalizeRemoteState(remoteState), changed: false, summary: "" };
+        state = mergeResult.state;
+        cloud.remoteRevision = Number(state.cloudRevision) || 0;
+        state.lastCloudSyncAt = cloud.lastFetchedAt;
+        if (mergeResult.changed) {
+          cloud.mergeLastAt = cloud.lastFetchedAt;
+          cloud.mergeLastSummary = `Oppstart: ${mergeResult.summary}`;
+          cloud.pendingSave = true;
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        setCloudDocRef();
+      } finally {
+        cloud.applyingRemote = false;
+      }
     }
     cloud.initialFetchComplete = true;
     if ((remoteState && !remoteHadRevision) || (!remoteState && !pendingFamilyCode() && state.setupCompleted)) await writeCloudState();
@@ -5808,8 +5824,10 @@ async function registerServiceWorkerAndUpdate() {
     window.location.reload();
   });
   try {
-    view.bootMessage = "Sjekker appversjon";
-    render();
+    if (view.booting) {
+      view.bootMessage = "Sjekker appversjon";
+      render();
+    }
     const registration = await navigator.serviceWorker.register(`./service-worker.js?v=${APP_VERSION}`);
     await registration.update();
     if (registration.waiting) {
@@ -5817,6 +5835,17 @@ async function registerServiceWorkerAndUpdate() {
     }
   } catch (error) {
     console.warn("Service worker update unavailable:", error);
+  }
+}
+
+function startBackgroundServices() {
+  registerServiceWorkerAndUpdate().finally(() => {
+    if (!view.booting) render();
+  });
+  if (!isSetupPreview()) {
+    initFirebaseSync().finally(() => {
+      if (!view.booting) render();
+    });
   }
 }
 
@@ -5843,14 +5872,11 @@ function validateStartupProfile() {
 
 async function startApp() {
   render();
-  await registerServiceWorkerAndUpdate();
-  if (!isSetupPreview()) {
-    await initFirebaseSync();
-  }
   validateStartupProfile();
   view.booting = false;
   queueScrollTop();
   render();
+  startBackgroundServices();
 }
 
 startApp();
