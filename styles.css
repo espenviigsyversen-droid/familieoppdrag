@@ -1279,6 +1279,24 @@ button:disabled {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.ops-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.ops-card p {
+  margin: 6px 0 0;
+}
+
 .backup-list {
   display: grid;
   gap: 10px;
@@ -1297,6 +1315,10 @@ button:disabled {
 
 .backup-item p {
   margin: 3px 0 0;
+}
+
+.restore-modal {
+  width: min(560px, 100%);
 }
 
 .tabs {
@@ -1673,6 +1695,7 @@ th {
   .dashboard-grid,
   .motivation-grid,
   .weekly-goal-card,
+  .ops-grid,
   .form-grid,
   .filter-bar,
   .level-row {

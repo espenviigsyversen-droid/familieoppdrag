@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "74";
+const APP_VERSION = "75";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -241,6 +241,7 @@ let view = {
   setupDraft: null,
   avatarPickerChildId: null,
   badgeCelebration: null,
+  restoreBackupId: null,
   gate: null,
   scrollTopPending: true
 };
@@ -477,6 +478,9 @@ function renderGlobalOverlays() {
   }
   if (view.badgeCelebration) {
     app.insertAdjacentHTML("beforeend", badgeCelebrationModal(view.badgeCelebration));
+  }
+  if (view.restoreBackupId) {
+    app.insertAdjacentHTML("beforeend", restoreBackupModal(view.restoreBackupId));
   }
 }
 
@@ -2334,6 +2338,7 @@ function settingsCloud() {
       <div class="diagnosis-box">
         <pre>${escapeText(diagnosis)}</pre>
       </div>
+      ${cloudOpsOverview()}
       <div class="backup-restore-box">
         <div class="section-title compact-title">
           <div>
@@ -2364,11 +2369,89 @@ function cloudBackupList() {
           <div>
             <strong>${escapeText(backup.reason || "Backup")}</strong>
             <p class="muted">${backup.createdAt ? formatDate(backup.createdAt) : "Ukjent tidspunkt"} · rev. ${Number(backup.cloudRevision) || 0}</p>
-            <p class="small">${escapeText(backup.familyName || state.familyName || "Familie")} · ${escapeText(backup.id)}</p>
+            <p class="small">${backupSummaryText(backup.state)} · ${escapeText(backup.id)}</p>
           </div>
-          <button class="btn warning" data-action="restore-cloud-backup" data-backup-id="${escapeAttr(backup.id)}">Gjenopprett</button>
+          <button class="btn warning" data-action="preview-cloud-backup" data-backup-id="${escapeAttr(backup.id)}" ${isCurrentOwner() ? "" : "disabled"}>Se og gjenopprett</button>
         </article>
       `).join("")}
+    </div>
+  `;
+}
+
+function cloudOpsOverview() {
+  const health = dataModelHealth();
+  return `
+    <div class="ops-grid">
+      <article class="ops-card">
+        <strong>Datamodell</strong>
+        <p class="muted">Nå: samlet appState med revisjonsvern.</p>
+        <div class="pill-row">
+          <span class="pill ${health.status}">${health.label}</span>
+          <span class="pill">Schema ${state.schemaVersion || SCHEMA_VERSION}</span>
+        </div>
+      </article>
+      <article class="ops-card">
+        <strong>Drift</strong>
+        <p class="muted">Siste synk og backup for denne familien.</p>
+        <div class="pill-row">
+          <span class="pill ${cloud.ready ? "done" : "pending"}">${cloud.ready ? "Sky klar" : "Sky venter"}</span>
+          <span class="pill">${Number(state.cloudRevision) || 0} rev.</span>
+        </div>
+      </article>
+      <article class="ops-card">
+        <strong>Neste datamodell</strong>
+        <p class="muted">Anbefalt neste større steg er delt Firestore-modell for oppgaver, barn og fullføringer.</p>
+        <span class="pill pending">Planlagt, ikke migrert</span>
+      </article>
+    </div>
+  `;
+}
+
+function dataModelHealth() {
+  if (!state.setupCompleted) return { status: "pending", label: "Ikke satt opp" };
+  if (cloud.ready && Number(state.cloudRevision) > 0) return { status: "done", label: "Beskyttet" };
+  return { status: "pending", label: "Venter på revisjon" };
+}
+
+function backupSummaryText(snapshotState) {
+  if (!snapshotState) return "Ingen innholdsoversikt";
+  return `${snapshotState.children?.length || 0} barn · ${snapshotState.tasks?.length || 0} oppgaver · ${snapshotState.completions?.length || 0} fullføringer`;
+}
+
+function restoreBackupModal(backupId) {
+  const backup = cloud.backupList.find((item) => item.id === backupId);
+  if (!backup) return "";
+  const snapshot = backup.state || {};
+  return `
+    <div class="modal-backdrop">
+      <form class="modal restore-modal" data-form="restore-cloud-backup">
+        <input type="hidden" name="backupId" value="${escapeAttr(backupId)}">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Skybackup</p>
+            <h2>Gjenopprett backup</h2>
+          </div>
+          <button class="btn secondary icon-btn" type="button" data-action="close-restore-backup" aria-label="Lukk">✕</button>
+        </div>
+        <div class="setup-note warning-note">
+          Dette ruller familien tilbake til valgt backup. Nåværende skydata sikkerhetskopieres først. Bare Google-eier kan gjøre dette.
+        </div>
+        <div class="setup-summary">
+          <div><strong>Tidspunkt</strong><span>${backup.createdAt ? formatDate(backup.createdAt) : "Ukjent"}</span></div>
+          <div><strong>Revisjon</strong><span>${Number(backup.cloudRevision) || 0}</span></div>
+          <div><strong>Familie</strong><span>${escapeText(snapshot.familyName || backup.familyName || "-")}</span></div>
+          <div><strong>Innhold</strong><span>${backupSummaryText(snapshot)}</span></div>
+        </div>
+        <div class="field">
+          <label>Voksen-PIN</label>
+          <input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus>
+          <small>PIN kreves i tillegg til Google-eier.</small>
+        </div>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn warning" type="submit">Gjenopprett backup</button>
+          <button class="btn secondary" type="button" data-action="close-restore-backup">Avbryt</button>
+        </div>
+      </form>
     </div>
   `;
 }
@@ -4690,6 +4773,15 @@ app.addEventListener("click", (event) => {
   if (action === "list-cloud-backups") {
     listCloudBackups();
   }
+  if (action === "preview-cloud-backup") {
+    if (!requireOwnerAccess("Bare Google-eier kan gjenopprette skybackup.")) return;
+    view.restoreBackupId = button.dataset.backupId;
+    render();
+  }
+  if (action === "close-restore-backup") {
+    view.restoreBackupId = null;
+    render();
+  }
   if (action === "restore-cloud-backup") {
     restoreCloudBackup(button.dataset.backupId);
   }
@@ -4825,6 +4917,10 @@ app.addEventListener("submit", async (event) => {
   }
   if (form.dataset.form === "join-existing-family") {
     await connectExistingFamilyByCode(form);
+    return;
+  }
+  if (form.dataset.form === "restore-cloud-backup") {
+    await restoreCloudBackupFromForm(form);
     return;
   }
   if (form.dataset.form === "family-settings") saveFamilySettings(form);
@@ -5188,13 +5284,31 @@ async function listCloudBackups() {
   }
 }
 
+async function restoreCloudBackupFromForm(form) {
+  if (!isCurrentOwner()) {
+    showToast("Bare Google-eier kan gjenopprette backup.");
+    return;
+  }
+  const data = new FormData(form);
+  const pinHash = await hashPin(data.get("pin"));
+  if (pinHash !== state.parentPinHash) {
+    showToast("Feil PIN.");
+    return;
+  }
+  await restoreCloudBackup(data.get("backupId"));
+}
+
 async function restoreCloudBackup(backupId) {
   if (!backupId || !cloud.ready || !cloud.getDoc || !cloud.setDoc) {
     showToast("Skyen er ikke klar ennå.");
     return;
   }
   const backupMeta = cloud.backupList.find((item) => item.id === backupId);
-  const ok = confirm(`Vil du gjenopprette backupen ${backupMeta?.createdAt ? formatDate(backupMeta.createdAt) : backupId}? Nåværende skydata blir sikkerhetskopiert først.`);
+  if (!isCurrentOwner()) {
+    showToast("Bare Google-eier kan gjenopprette backup.");
+    return;
+  }
+  const ok = confirm(`Siste sjekk: Vil du gjenopprette backupen ${backupMeta?.createdAt ? formatDate(backupMeta.createdAt) : backupId}? Nåværende skydata blir sikkerhetskopiert først.`);
   if (!ok) return;
   try {
     cloud.backupRestoreStatus = "Gjenoppretter backup ...";
@@ -5236,6 +5350,7 @@ async function restoreCloudBackup(backupId) {
     cloud.lastSavedAt = now;
     cloud.lastFetchedAt = now;
     cloud.backupRestoreStatus = `Gjenopprettet ${backupId} som rev. ${nextRevision}.`;
+    view.restoreBackupId = null;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     cloud.applyingRemote = false;
     await writeFamilyCodeIndex().catch((error) => console.warn("Family code index write failed after restore:", error));
@@ -5652,6 +5767,17 @@ async function writeFamilyCodeIndex() {
     cloudFamilyId: cloudFamilyId(),
     familyName: state.familyName || "",
     ownerUid: state.ownerUid || null,
+    appVersion: APP_VERSION,
+    schemaVersion: state.schemaVersion || SCHEMA_VERSION,
+    cloudRevision: Number(state.cloudRevision) || 0,
+    childrenCount: state.children?.length || 0,
+    tasksCount: state.tasks?.length || 0,
+    completionsCount: state.completions?.length || 0,
+    rewardsCount: state.rewards?.length || 0,
+    badgesCount: state.badges?.length || 0,
+    lastCloudSyncAt: state.lastCloudSyncAt || null,
+    lastBackupAt: cloud.backupLastAt || null,
+    lastBackupRevision: Number(cloud.backupLastRevision) || 0,
     updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
   }, { merge: true });
 }
