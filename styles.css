@@ -1327,12 +1327,14 @@ button:disabled {
 }
 
 .sync-banner.pending .sync-banner-icon,
-.sync-banner.warning .sync-banner-icon {
+.sync-banner.warning .sync-banner-icon,
+.sync-banner.update .sync-banner-icon {
   background: #fff4cc;
   color: #6b4400;
 }
 
-.sync-banner.warning {
+.sync-banner.warning,
+.sync-banner.update {
   border-color: rgba(255, 183, 3, 0.55);
   background: #fff7dd;
 }

@@ -2,7 +2,8 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "83";
+const APP_VERSION = "85";
+const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -80,6 +81,9 @@ const cloud = {
   adminFamilies: [],
   adminStatus: "",
   adminError: "",
+  minSupportedAppVersion: MIN_SUPPORTED_APP_VERSION,
+  versionBlocked: false,
+  versionBlockedMessage: "",
   applyingRemote: false
 };
 
@@ -246,6 +250,11 @@ let view = {
   badgeCelebration: null,
   restoreBackupId: null,
   gate: null,
+  appUpdateAvailable: false,
+  appUpdateInstalling: false,
+  appUpdateReloading: false,
+  serviceWorkerRegistration: null,
+  serviceWorkerWaiting: null,
   scrollTopPending: true
 };
 
@@ -269,6 +278,8 @@ function loadState() {
     familyName: "",
     familyCode: createFamilyCode(),
     schemaVersion: SCHEMA_VERSION,
+    appVersion: APP_VERSION,
+    minSupportedAppVersion: MIN_SUPPORTED_APP_VERSION,
     setupCompleted: false,
     ownerUid: null,
     adultUsers: [],
@@ -298,6 +309,8 @@ function normalizeLocalState(savedState = {}, existingInstall = true) {
     familyName: savedState.familyName || "Familien",
     familyCode: savedState.familyCode || familyCodeFromSeed(`${savedState.familyId || "local-family"}-${savedState.createdAt || "start"}`),
     schemaVersion: savedState.schemaVersion || SCHEMA_VERSION,
+    appVersion: savedState.appVersion || APP_VERSION,
+    minSupportedAppVersion: Math.max(Number(savedState.minSupportedAppVersion) || 0, MIN_SUPPORTED_APP_VERSION),
     setupCompleted: savedState.setupCompleted ?? (existingInstall && hasConfiguredData),
     ownerUid: savedState.ownerUid || null,
     adultUsers: normalizeAdultUsers(savedState.adultUsers || []),
@@ -429,6 +442,8 @@ function normalizeRewards(rewards) {
 
 function saveState() {
   syncFamilyCodeInvite();
+  state.appVersion = APP_VERSION;
+  state.minSupportedAppVersion = Math.max(Number(state.minSupportedAppVersion) || 0, MIN_SUPPORTED_APP_VERSION);
   state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   ensureCloudFamilyPath();
@@ -3477,6 +3492,36 @@ async function refreshApp() {
   }
 }
 
+async function applyAppUpdate() {
+  view.appUpdateReloading = true;
+  render();
+  showToast("Oppdaterer appen ...");
+  try {
+    if (cloud.pendingSave) {
+      await flushCloudSave();
+    }
+    const registration = view.serviceWorkerRegistration || ("serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : null);
+    const waiting = view.serviceWorkerWaiting || registration?.waiting;
+    if (waiting) {
+      waiting.postMessage({ type: "SKIP_WAITING" });
+      window.setTimeout(() => window.location.reload(), 1800);
+      return;
+    }
+    if (registration) await registration.update();
+  } catch (error) {
+    console.warn("Could not apply app update:", error);
+  }
+  window.setTimeout(() => window.location.reload(), 500);
+}
+
+function markAppUpdateAvailable(registration) {
+  view.serviceWorkerRegistration = registration || view.serviceWorkerRegistration;
+  view.serviceWorkerWaiting = registration?.waiting || view.serviceWorkerWaiting;
+  view.appUpdateAvailable = true;
+  view.appUpdateInstalling = false;
+  if (!view.booting) render();
+}
+
 function awardPoints(childId, amount, description, sourceId = null, type = "manual") {
   const child = getChild(childId);
   const previousLevelNumber = currentLevelIndex(child.lifetimePoints);
@@ -4361,6 +4406,26 @@ function syncStatusBanner() {
 }
 
 function syncBannerStatus() {
+  if (view.appUpdateAvailable) {
+    return {
+      kind: "update",
+      icon: "↻",
+      title: "Ny versjon er klar",
+      text: view.appUpdateReloading ? "Oppdaterer appen ..." : "Trykk Oppdater app når det passer, så lastes siste versjon inn.",
+      action: view.appUpdateReloading ? "" : "apply-app-update",
+      actionLabel: "Oppdater app"
+    };
+  }
+  if (!isAppVersionSupported()) {
+    return {
+      kind: "rejected",
+      icon: "!",
+      title: "Appen må oppdateres",
+      text: versionBlockedMessage(),
+      action: view.serviceWorkerWaiting ? "apply-app-update" : "refresh-app",
+      actionLabel: "Oppdater app"
+    };
+  }
   if (!cloud.enabled) return null;
   if (cloud.error) {
     const canFetch = cloud.ready && cloud.initialFetchComplete;
@@ -4416,6 +4481,26 @@ function isRecentEvent(value, minutes) {
   const time = new Date(value || 0).getTime();
   if (!Number.isFinite(time)) return false;
   return Date.now() - time < minutes * 60 * 1000;
+}
+
+function appVersionNumber(value = APP_VERSION) {
+  return Number(String(value || "").replace(/[^\d.]/g, "")) || 0;
+}
+
+function requiredAppVersion() {
+  return Math.max(
+    appVersionNumber(MIN_SUPPORTED_APP_VERSION),
+    appVersionNumber(state.minSupportedAppVersion),
+    appVersionNumber(cloud.minSupportedAppVersion)
+  );
+}
+
+function isAppVersionSupported() {
+  return appVersionNumber(APP_VERSION) >= requiredAppVersion();
+}
+
+function versionBlockedMessage() {
+  return `Denne appversjonen (${APP_VERSION}) er for gammel til å lagre trygt. Oppdater til versjon ${requiredAppVersion()} eller nyere før du registrerer nye endringer.`;
 }
 
 function cloudPathLabel(familyId = cloudFamilyId()) {
@@ -4731,6 +4816,9 @@ function syncDiagnosisText() {
   return [
     `App: ${APP_CONFIG.appName}`,
     `Versjon: ${APP_VERSION}`,
+    `Minimum støttet versjon: ${requiredAppVersion()}`,
+    `Versjon kan lagre: ${isAppVersionSupported() ? "ja" : "nei"}`,
+    `Versjonssperre: ${cloud.versionBlocked ? cloud.versionBlockedMessage || "aktiv" : "nei"}`,
     `Miljø: ${environmentLabel()}`,
     `Firebase-prosjekt: ${firebaseProjectLabel()}`,
     `Sky aktiv: ${cloud.enabled ? "ja" : "nei"}`,
@@ -5522,6 +5610,9 @@ app.addEventListener("click", (event) => {
   if (action === "refresh-app") {
     refreshApp();
   }
+  if (action === "apply-app-update") {
+    applyAppUpdate();
+  }
   if (action === "google-owner-login") {
     signInGoogleOwner();
   }
@@ -6150,6 +6241,7 @@ function currentFamilyAdminSnapshot() {
     familyName: state.familyName || "",
     ownerUid: state.ownerUid || null,
     appVersion: APP_VERSION,
+    minSupportedAppVersion: requiredAppVersion(),
     schemaVersion: state.schemaVersion || SCHEMA_VERSION,
     cloudRevision: Number(state.cloudRevision) || 0,
     childrenCount: state.children?.length || 0,
@@ -6615,6 +6707,8 @@ function ensureCloudFamilyPath() {
 }
 
 function normalizeRemoteState(remoteState) {
+  const minSupportedAppVersion = Math.max(Number(remoteState.minSupportedAppVersion) || 0, MIN_SUPPORTED_APP_VERSION);
+  cloud.minSupportedAppVersion = Math.max(Number(cloud.minSupportedAppVersion) || 0, minSupportedAppVersion);
   return {
     ...loadState(),
     ...remoteState,
@@ -6634,6 +6728,8 @@ function normalizeRemoteState(remoteState) {
     syncDiagnostics: normalizeSyncDiagnostics(remoteState.syncDiagnostics),
     cloudMigration: normalizeCloudMigration(remoteState.cloudMigration),
     levels: remoteState.levels || DEFAULT_LEVELS,
+    appVersion: remoteState.appVersion || APP_VERSION,
+    minSupportedAppVersion,
     cloudRevision: Number(remoteState.cloudRevision) || 0,
     lastCloudSyncAt: remoteState.lastCloudSyncAt || null
   };
@@ -6641,6 +6737,13 @@ function normalizeRemoteState(remoteState) {
 
 function queueCloudSave() {
   if (!cloud.enabled || cloud.applyingRemote) return;
+  if (!isAppVersionSupported()) {
+    cloud.versionBlocked = true;
+    cloud.versionBlockedMessage = versionBlockedMessage();
+    cloud.pendingSave = false;
+    if (!view.booting) render();
+    return;
+  }
   cloud.pendingSave = true;
   if (!cloud.ready || !cloud.initialFetchComplete || !cloud.docRef || !cloud.setDoc) return;
   window.clearTimeout(cloud.saveTimer);
@@ -6651,11 +6754,25 @@ function queueCloudSave() {
 
 async function flushCloudSave() {
   if (!cloud.enabled || cloud.applyingRemote || !cloud.ready || !cloud.initialFetchComplete || !cloud.docRef || !cloud.setDoc) return;
+  if (!isAppVersionSupported()) {
+    cloud.versionBlocked = true;
+    cloud.versionBlockedMessage = versionBlockedMessage();
+    cloud.pendingSave = false;
+    render();
+    return;
+  }
   try {
     const result = await writeCloudState();
+    if (result?.blocked === "version") {
+      cloud.pendingSave = false;
+      render();
+      return;
+    }
     cloud.pendingSave = Boolean(result?.stale && cloud.mergeLastAt);
     if (result?.saved) cloud.lastSavedAt = new Date().toISOString();
     cloud.error = "";
+    cloud.versionBlocked = false;
+    cloud.versionBlockedMessage = "";
     render();
   } catch (error) {
     cloud.pendingSave = true;
@@ -6671,8 +6788,15 @@ async function writeCloudState() {
     cloud.pendingSave = true;
     return { saved: false, blocked: "initial-fetch" };
   }
+  if (!isAppVersionSupported()) {
+    cloud.versionBlocked = true;
+    cloud.versionBlockedMessage = versionBlockedMessage();
+    cloud.pendingSave = false;
+    return { saved: false, blocked: "version" };
+  }
   const now = new Date().toISOString();
   const localRevision = Number(state.cloudRevision) || 0;
+  const minSupportedAppVersion = requiredAppVersion();
   backupCloudState("before-cloud-write", state);
   if (cloud.runTransaction && cloud.db) {
     const result = await cloud.runTransaction(cloud.db, async (transaction) => {
@@ -6694,6 +6818,8 @@ async function writeCloudState() {
       }
       const nextState = {
         ...state,
+        appVersion: APP_VERSION,
+        minSupportedAppVersion,
         cloudRevision: nextRevision,
         lastCloudSyncAt: now,
         updatedAt: state.updatedAt || now
@@ -6702,6 +6828,8 @@ async function writeCloudState() {
         familyId: nextState.familyId || "local-family",
         familyName: nextState.familyName || "",
         state: nextState,
+        appVersion: APP_VERSION,
+        minSupportedAppVersion,
         cloudRevision: nextRevision,
         updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
       }, { merge: true });
@@ -6736,6 +6864,8 @@ async function writeCloudState() {
     }
     state = normalizeLocalState({
       ...state,
+      appVersion: APP_VERSION,
+      minSupportedAppVersion,
       cloudRevision: nextRevision,
       lastCloudSyncAt: now
     }, true);
@@ -6744,6 +6874,8 @@ async function writeCloudState() {
       familyId: state.familyId || "local-family",
       familyName: state.familyName || "",
       state,
+      appVersion: APP_VERSION,
+      minSupportedAppVersion,
       cloudRevision: nextRevision,
       updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
     }, { merge: true });
@@ -6798,6 +6930,7 @@ async function writeUserFamilyLink() {
     familyCode: state.familyCode || "",
     role,
     appVersion: APP_VERSION,
+    minSupportedAppVersion: requiredAppVersion(),
     updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
   }, { merge: true });
 }
@@ -6808,7 +6941,12 @@ async function registerServiceWorkerAndUpdate() {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (refreshing) return;
     refreshing = true;
-    window.location.reload();
+    if (view.appUpdateReloading) {
+      window.location.reload();
+    } else {
+      view.appUpdateAvailable = true;
+      if (!view.booting) render();
+    }
   });
   try {
     if (view.booting) {
@@ -6816,9 +6954,20 @@ async function registerServiceWorkerAndUpdate() {
       render();
     }
     const registration = await navigator.serviceWorker.register(`./service-worker.js?v=${APP_VERSION}`);
+    view.serviceWorkerRegistration = registration;
+    registration.addEventListener("updatefound", () => {
+      const worker = registration.installing;
+      if (!worker) return;
+      view.appUpdateInstalling = true;
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "installed" && navigator.serviceWorker.controller) {
+          markAppUpdateAvailable(registration);
+        }
+      });
+    });
     await registration.update();
     if (registration.waiting) {
-      registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      markAppUpdateAvailable(registration);
     }
   } catch (error) {
     console.warn("Service worker update unavailable:", error);
