@@ -719,6 +719,10 @@ button:disabled {
   gap: 10px;
 }
 
+.share-checklist.expanded {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .share-check {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

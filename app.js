@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "77";
+const APP_VERSION = "78";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -1863,7 +1863,6 @@ function adultShare() {
   const adultLink = adultInvite ? adultInviteLinkFor(adultInvite) : "";
   const ownerReady = familyHasGoogleOwner();
   const ownerAccess = hasOwnerAccess();
-  const readiness = shareReadinessItems(adultInvite);
   return `
     <section>
       <div class="section-title">
@@ -1872,25 +1871,7 @@ function adultShare() {
           <p class="muted">Send riktig lenke til riktig type enhet eller person.</p>
         </div>
       </div>
-      <section class="panel share-ready-panel">
-        <div class="section-title compact-title">
-          <div>
-            <h3>Delingsklar-sjekk</h3>
-            <p class="muted">Rask kontroll før du sender lenker videre.</p>
-          </div>
-        </div>
-        <div class="share-checklist">
-          ${readiness.map((item) => `
-            <div class="share-check ${item.status}">
-              <span class="share-check-mark">${item.status === "done" ? "✓" : item.status === "rejected" ? "!" : "…"}</span>
-              <span>
-                <strong>${escapeText(item.title)}</strong>
-                <small>${escapeText(item.description)}</small>
-              </span>
-            </div>
-          `).join("")}
-        </div>
-      </section>
+      ${sharingReadinessPanel()}
       <div class="share-grid">
         <article class="panel share-card">
           <div class="share-card-head">
@@ -1973,9 +1954,11 @@ function adultShare() {
 
 function shareReadinessItems(adultInvite) {
   const hasChildren = activeChildren().length > 0;
-  const cloudOk = cloud.ready && !cloud.pendingSave && !cloud.error;
-  const cloudPending = cloud.ready && cloud.pendingSave;
+  const cloudOk = cloud.ready && cloud.initialFetchComplete && !cloud.pendingSave && !cloud.error;
+  const cloudPending = cloud.pendingSave || !cloud.initialFetchComplete;
   const familyCodeOk = Boolean(state.familyCode);
+  const backupOk = Boolean(cloud.backupLastAt || cloud.backupList?.length);
+  const appVersionOk = String(APP_VERSION).trim() !== "";
   return [
     {
       title: "Google-eier",
@@ -2001,8 +1984,59 @@ function shareReadinessItems(adultInvite) {
       title: "Vokseninvitasjon",
       description: adultInvite ? inviteExpiryLabel(adultInvite) : "Valgfritt. Lag en vokseninvitasjon når en annen voksen skal få tilgang.",
       status: adultInvite ? "done" : "pending"
+    },
+    {
+      title: "Backup",
+      description: backupOk ? "Backup finnes i denne økten." : "Hent skybackuper eller lag en sky-lagring før du deler bredt.",
+      status: backupOk ? "done" : "pending"
+    },
+    {
+      title: "Appversjon",
+      description: appVersionOk ? `Versjon ${APP_VERSION} er aktiv.` : "Appversjon mangler.",
+      status: appVersionOk ? "done" : "rejected"
+    },
+    {
+      title: "Lokale endringer",
+      description: cloud.pendingSave ? "Det finnes endringer som ikke er ferdig lagret til sky." : "Ingen ventende lokal sky-lagring.",
+      status: cloud.pendingSave ? "pending" : "done"
     }
   ];
+}
+
+function sharingReadinessSummary(items = shareReadinessItems(activeInvites("adult")[0])) {
+  const rejected = items.filter((item) => item.status === "rejected").length;
+  const pending = items.filter((item) => item.status === "pending").length;
+  if (rejected) return { status: "rejected", title: "Ikke klar for deling", text: `${rejected} punkt må rettes før du deler med en ny familie.` };
+  if (pending) return { status: "pending", title: "Nesten klar", text: `${pending} punkt bør sjekkes før du deler bredt.` };
+  return { status: "done", title: "Klar for deling", text: "Alle tekniske delingssjekker ser gode ut." };
+}
+
+function sharingReadinessPanel() {
+  const adultInvite = activeInvites("adult")[0];
+  const items = shareReadinessItems(adultInvite);
+  const summary = sharingReadinessSummary(items);
+  return `
+    <section class="panel share-ready-panel">
+      <div class="section-title compact-title">
+        <div>
+          <h2>${escapeText(summary.title)}</h2>
+          <p class="muted">${escapeText(summary.text)}</p>
+        </div>
+        <span class="pill ${summary.status}">${summary.status === "done" ? "Klar" : summary.status === "pending" ? "Sjekk" : "Stopp"}</span>
+      </div>
+      <div class="share-checklist expanded">
+        ${items.map((item) => `
+          <div class="share-check ${item.status}">
+            <span class="share-check-mark">${item.status === "done" ? "✓" : item.status === "rejected" ? "!" : "…"}</span>
+            <span>
+              <strong>${escapeText(item.title)}</strong>
+              <small>${escapeText(item.description)}</small>
+            </span>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function childForm(child) {
@@ -2047,6 +2081,7 @@ function adultSettings() {
   if (view.settingsPage === "starter") return settingsStarterPackages();
   if (view.settingsPage === "levels") return settingsLevels();
   if (view.settingsPage === "cloud") return settingsCloud();
+  if (view.settingsPage === "sharing-ready") return settingsSharingReady();
   if (view.settingsPage === "admin") return settingsAdmin();
   if (view.settingsPage === "migration") return settingsDataMigration();
   if (view.settingsPage === "reset") return settingsReset();
@@ -2066,6 +2101,7 @@ function settingsMenu() {
     ["starter", "Startpakker", "Legg inn standard oppgaver og belønninger"],
     ["levels", "Nivåer", "Navn og grenser for livstidsstjerner"],
     ["cloud", "App, sky og diagnose", "Miljø, Firebase, synk og feilsøking"],
+    ["sharing-ready", "Klar for deling", "Siste kontroll før du sender appen videre"],
     ["admin", "Drift/admin", "Oversikt over familier og skyhelse"],
     ["migration", "Datamodell og migrering", "Plan og validering før neste Firestore-modell"],
     ["reset", "Nullstilling", "Start helt på nytt"]
@@ -2250,6 +2286,43 @@ function settingsBackup() {
         ${cloud.backupRestoreError ? `<p class="small">Gjenopprettingsfeil: ${escapeText(cloud.backupRestoreError)}</p>` : ""}
         ${cloud.backupList?.length ? cloudBackupList() : `<div class="empty">Ingen skybackuper hentet i denne økten.</div>`}
       </div>
+    </section>
+  `;
+}
+
+function settingsSharingReady() {
+  return `
+    <section>
+      <div class="section-title">
+        <div>
+          <h2>Klar for deling</h2>
+          <p class="muted">Siste tekniske kontroll før appen deles med andre enheter eller familier.</p>
+        </div>
+        ${settingsBackButton()}
+      </div>
+      ${sharingReadinessPanel()}
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h3>Anbefalt før du sender lenke</h3>
+            <p class="muted">Dette reduserer risikoen for forvirring og gamle data.</p>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" data-action="force-cloud-fetch">Hent nyeste data</button>
+          <button class="btn secondary" data-action="force-cloud-save">Lagre til sky nå</button>
+          <button class="btn secondary" data-action="list-cloud-backups">Hent skybackuper</button>
+          <button class="btn secondary" data-action="adult-tab" data-tab="share">Åpne Deling</button>
+        </div>
+        <div class="share-status-grid" style="margin-top:14px">
+          <div><strong>Familie</strong><span>${escapeText(state.familyName || "-")}</span></div>
+          <div><strong>Familie-id</strong><span>${escapeText(state.familyId || "-")}</span></div>
+          <div><strong>Sky-sti</strong><span>${escapeText(cloudPathLabel())}</span></div>
+          <div><strong>Appversjon</strong><span>${APP_VERSION}</span></div>
+          <div><strong>Skyrevisjon</strong><span>${Number(state.cloudRevision) || 0}</span></div>
+          <div><strong>Siste synk</strong><span>${state.lastCloudSyncAt ? formatDate(state.lastCloudSyncAt) : "-"}</span></div>
+        </div>
+      </section>
     </section>
   `;
 }
@@ -2548,6 +2621,11 @@ function restoreBackupModal(backupId) {
           <input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus>
           <small>PIN kreves i tillegg til Google-eier.</small>
         </div>
+        <div class="field">
+          <label>Skriv GJENOPPRETT</label>
+          <input name="confirmText" type="text" autocomplete="off" required>
+          <small>Dette er en ekstra sperre før data endres.</small>
+        </div>
         <div class="actions" style="margin-top:14px">
           <button class="btn warning" type="submit">Gjenopprett backup</button>
           <button class="btn secondary" type="button" data-action="export-cloud-backup" data-backup-id="${escapeAttr(backupId)}">Last ned JSON</button>
@@ -2585,6 +2663,7 @@ function settingsAdmin() {
       `}
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent familier</button>
+        <button class="btn secondary" data-action="load-current-admin-family">Vis denne familien</button>
         <button class="btn secondary" data-action="copy-admin-summary" ${cloud.adminFamilies.length ? "" : "disabled"}>Kopier oversikt</button>
       </div>
       ${cloud.adminStatus ? `<p class="small">${escapeText(cloud.adminStatus)}</p>` : ""}
@@ -5128,6 +5207,9 @@ app.addEventListener("click", (event) => {
   if (action === "load-admin-families") {
     loadAdminFamilies();
   }
+  if (action === "load-current-admin-family") {
+    loadCurrentAdminFamily();
+  }
   if (action === "copy-admin-summary") {
     copyAdminSummary();
   }
@@ -5664,10 +5746,44 @@ async function loadAdminFamilies() {
     render();
   } catch (error) {
     cloud.adminStatus = "Kunne ikke hente adminoversikt.";
-    cloud.adminError = error?.message || "Lesing fra familyCodes feilet.";
+    const message = error?.message || "Lesing fra familyCodes feilet.";
+    cloud.adminError = message.includes("permission") || message.includes("permissions")
+      ? "Firestore-reglene tillater ikke listing av familyCodes. Bruk Vis denne familien, eller åpne for admin-lesing i rules senere."
+      : message;
     showToast("Kunne ikke hente adminoversikt.");
     render();
   }
+}
+
+function loadCurrentAdminFamily() {
+  cloud.adminFamilies = [currentFamilyAdminSnapshot()];
+  cloud.adminStatus = "Viser bare denne familien lokalt.";
+  cloud.adminError = "";
+  showToast("Denne familien vises i adminoversikten.");
+  render();
+}
+
+function currentFamilyAdminSnapshot() {
+  return {
+    id: state.familyCode || cloudFamilyId(),
+    code: state.familyCode || "",
+    familyId: state.familyId || cloudFamilyId(),
+    cloudFamilyId: cloudFamilyId(),
+    familyName: state.familyName || "",
+    ownerUid: state.ownerUid || null,
+    appVersion: APP_VERSION,
+    schemaVersion: state.schemaVersion || SCHEMA_VERSION,
+    cloudRevision: Number(state.cloudRevision) || 0,
+    childrenCount: state.children?.length || 0,
+    tasksCount: state.tasks?.length || 0,
+    completionsCount: state.completions?.length || 0,
+    rewardsCount: state.rewards?.length || 0,
+    badgesCount: state.badges?.length || 0,
+    lastCloudSyncAt: state.lastCloudSyncAt || cloud.lastFetchedAt || cloud.lastSavedAt || null,
+    lastBackupAt: cloud.backupLastAt || null,
+    lastBackupRevision: Number(cloud.backupLastRevision) || 0,
+    updatedAt: state.updatedAt || null
+  };
 }
 
 function comparableDateValue(value) {
@@ -5744,6 +5860,10 @@ async function restoreCloudBackupFromForm(form) {
   const pinHash = await hashPin(data.get("pin"));
   if (pinHash !== state.parentPinHash) {
     showToast("Feil PIN.");
+    return;
+  }
+  if (String(data.get("confirmText") || "").trim().toUpperCase() !== "GJENOPPRETT") {
+    showToast("Skriv GJENOPPRETT for å bekrefte.");
     return;
   }
   await restoreCloudBackup(data.get("backupId"), data.get("restoreScope") || "full");
