@@ -2572,8 +2572,17 @@ function settingsAdmin() {
       <div class="setup-note ${canRead ? "" : "warning-note"}">
         ${canRead
           ? "Denne visningen leser driftsmetadata fra familyCodes. Den endrer ikke familiedata."
-          : "Logg inn som Google-eier for å hente adminoversikt."}
+          : "Drift/admin krever at denne enheten er logget inn som Google-eier. Du kan fortsatt bruke resten av appen anonymt."}
       </div>
+      ${canRead ? "" : `
+        <div class="auth-status-card pending">
+          <div>
+            <strong>Google-eier kreves</strong>
+            <small>${escapeText(googleOwnerLabel())}</small>
+          </div>
+          <button class="btn secondary" type="button" data-action="google-owner-login">Logg inn som eier</button>
+        </div>
+      `}
       <div class="actions" style="margin-top:14px">
         <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent familier</button>
         <button class="btn secondary" data-action="copy-admin-summary" ${cloud.adminFamilies.length ? "" : "disabled"}>Kopier oversikt</button>
@@ -4048,6 +4057,10 @@ function currentAdultUser() {
 function hasOwnerAccess() {
   const uid = cloud.authUser?.uid;
   return Boolean(uid && state.ownerUid === uid && familyOwner()?.uid === uid);
+}
+
+function isCurrentOwner() {
+  return hasOwnerAccess();
 }
 
 function currentRoleLabel() {
