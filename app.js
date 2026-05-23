@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "69";
+const APP_VERSION = "70";
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
 const APP_CONFIG = {
@@ -225,6 +225,7 @@ let view = {
   creatingChild: false,
   taskFilters: { search: "", category: "all", child: "all", status: "all" },
   setupStep: 0,
+  setupMode: "new",
   setupDraft: null,
   avatarPickerChildId: null,
   badgeCelebration: null,
@@ -536,6 +537,10 @@ function renderDeviceConnect() {
 }
 
 function renderSetup() {
+  if (view.setupMode === "existing" && !isSetupPreview()) {
+    renderExistingFamilySetup();
+    return;
+  }
   ensureSetupDraft();
   const steps = setupSteps();
   const preview = isSetupPreview();
@@ -570,6 +575,61 @@ function renderSetup() {
           ${step < steps.length - 1 ? `<button class="btn" type="button" data-action="setup-next">Neste</button>` : `<button class="btn" type="submit">${preview ? "Avslutt forhåndsvisning" : "Start og åpne Deling"}</button>`}
         </div>
       </form>
+    </section>
+  `;
+}
+
+function renderExistingFamilySetup() {
+  app.innerHTML = `
+    <header class="topbar setup-topbar">
+      <div class="brand">
+        <div class="brand-mark">⭐</div>
+        <div>
+          <p class="eyebrow">Familieoppdrag</p>
+          <h1>Koble til familie</h1>
+        </div>
+      </div>
+    </header>
+    <section class="setup-shell">
+      <div class="setup-intro setup-wizard-intro">
+        <h2>Har allerede familie</h2>
+        <p>Koble denne enheten til en familie som allerede finnes i skyen.</p>
+        <div class="setup-progress" aria-hidden="true">
+          <span class="active"></span><span></span><span></span>
+        </div>
+      </div>
+      <div class="panel setup-form">
+        <div class="setup-block">
+          <h3>Finn familien din</h3>
+          <p class="muted">Bruk familiekoden fra Deling-fanen, eller logg inn med Google hvis denne kontoen allerede er koblet til familien.</p>
+          <div class="setup-connect-grid">
+            <form data-form="join-existing-family" class="setup-connect-card">
+              <div>
+                <strong>Bruk familiekode</strong>
+                <p class="muted">Passer for barnas enheter, felles tablet og nye nettlesere.</p>
+              </div>
+              <div class="field">
+                <label>Familiekode</label>
+                <input name="familyCode" type="text" inputmode="text" autocomplete="off" placeholder="F.eks. H2K4M6P8" required>
+              </div>
+              <button class="btn" type="submit">Koble til familie</button>
+            </form>
+            <div class="setup-connect-card">
+              <div>
+                <strong>Logg inn med Google</strong>
+                <p class="muted">Passer for voksne. Fungerer når kontoen er registrert som voksen/eier i appen.</p>
+              </div>
+              <button class="btn secondary" type="button" data-action="existing-family-google-login">Logg inn og finn familie</button>
+            </div>
+          </div>
+          ${cloud.familyCodeLookupStatus ? `<div class="setup-note">Familiekode: ${escapeText(cloud.familyCodeLookupStatus)}</div>` : ""}
+          ${cloud.familyCodeLookupError ? `<div class="setup-note warning-note">Kunne ikke koble til: ${escapeText(cloud.familyCodeLookupError)}</div>` : ""}
+          ${cloud.error ? `<div class="setup-note warning-note">Google/sky: ${escapeText(cloud.error)}</div>` : ""}
+        </div>
+        <div class="actions setup-actions">
+          <button class="btn secondary" type="button" data-action="setup-new-family">Lag ny familie i stedet</button>
+        </div>
+      </div>
     </section>
   `;
 }
@@ -609,6 +669,7 @@ function setupStepContent(stepId) {
         <p class="muted">Veilederen hjelper deg å lage en familie, legge inn barn, velge startmaler og sette voksen-PIN.</p>
         <div class="setup-note">Du kan endre navn, oppgaver, belønninger, barn, PIN og deling senere fra voksenpanelet.</div>
         ${preview ? `<div class="setup-note">Forhåndsvisning er trygg: Den logger ikke inn, oppretter ikke familie og skriver ikke til Firestore.</div>` : ""}
+        ${!preview ? `<div class="actions" style="margin-top:16px"><button class="btn secondary" type="button" data-action="setup-existing-family">Har allerede familie</button></div>` : ""}
       </div>
     `;
   }
@@ -3601,6 +3662,72 @@ async function signInGoogleOwner() {
   }
 }
 
+async function signInExistingFamilyWithGoogle() {
+  if (!cloud.auth || !cloud.GoogleAuthProvider || !cloud.signInWithPopup || !cloud.getDoc) {
+    showToast("Google-innlogging er ikke klar ennå.");
+    return;
+  }
+  try {
+    const provider = new cloud.GoogleAuthProvider();
+    provider.setCustomParameters?.({ prompt: "select_account" });
+    const result = await cloud.signInWithPopup(cloud.auth, provider);
+    cloud.authUser = normalizeAuthUser(result.user);
+    const linkRef = userFamilyLinkRef(result.user.uid);
+    const snapshot = linkRef ? await cloud.getDoc(linkRef) : null;
+    const data = snapshot?.exists() ? snapshot.data() : null;
+    const familyId = data?.cloudFamilyId || data?.familyId || "";
+    if (!familyId) {
+      cloud.error = "Fant ingen familie koblet til denne Google-kontoen. Bruk familiekode, eller åpne appen én gang som eier på en enhet som allerede er koblet til.";
+      showToast("Fant ingen familie på Google-kontoen.");
+      render();
+      return;
+    }
+    const loaded = await loadFamilyFromCloud(familyId, { familyCode: data.familyCode || "" });
+    if (!loaded) {
+      showToast("Fant ikke familiedata i skyen.");
+      render();
+      return;
+    }
+    registerGoogleAdult(result.user, data.role || "adult");
+    saveState();
+    await writeUserFamilyLink().catch((error) => {
+      console.warn("Could not refresh user family link:", error);
+    });
+    showToast("Familien er hentet fra Google-kontoen.");
+    render();
+  } catch (error) {
+    cloud.error = error?.message || "Kunne ikke logge inn med Google";
+    showToast("Google-innlogging feilet.");
+    render();
+  }
+}
+
+async function connectExistingFamilyByCode(form) {
+  if (!cloud.ready || !cloud.getDoc || !cloud.doc) {
+    showToast("Skyen er ikke klar ennå.");
+    return;
+  }
+  const code = normalizeFamilyCode(new FormData(form).get("familyCode"));
+  if (!code) {
+    showToast("Skriv inn familiekode.");
+    return;
+  }
+  const familyId = await familyIdForCode(code);
+  if (!familyId) {
+    showToast("Fant ikke familiekoden.");
+    render();
+    return;
+  }
+  const loaded = await loadFamilyFromCloud(familyId, { familyCode: code });
+  if (!loaded) {
+    showToast("Fant ikke familiedata i skyen.");
+    render();
+    return;
+  }
+  showToast("Familien er koblet til.");
+  render();
+}
+
 async function acceptAdultInvite() {
   const inviteCode = pendingAdultInviteCode();
   const invite = findActiveInvite(inviteCode, "adult");
@@ -4192,6 +4319,8 @@ app.addEventListener("click", (event) => {
     "home",
     "setup-next",
     "setup-back",
+    "setup-existing-family",
+    "setup-new-family",
     "cancel-connect",
     "connect-device",
     "cancel-gate",
@@ -4225,6 +4354,17 @@ app.addEventListener("click", (event) => {
   }
   if (action === "setup-back") {
     setupBack();
+  }
+  if (action === "setup-existing-family") {
+    view.setupMode = "existing";
+    queueScrollTop();
+    render();
+  }
+  if (action === "setup-new-family") {
+    view.setupMode = "new";
+    view.setupStep = 0;
+    queueScrollTop();
+    render();
   }
   if (action === "cancel-connect") {
     clearPendingFamilyCode();
@@ -4373,6 +4513,9 @@ app.addEventListener("click", (event) => {
   if (action === "google-owner-login") {
     signInGoogleOwner();
   }
+  if (action === "existing-family-google-login") {
+    signInExistingFamilyWithGoogle();
+  }
   if (action === "force-cloud-save") {
     cloud.pendingSave = true;
     flushCloudSave();
@@ -4512,6 +4655,10 @@ app.addEventListener("submit", async (event) => {
   }
   if (form.dataset.form === "first-setup") {
     await completeFirstSetup(form);
+    return;
+  }
+  if (form.dataset.form === "join-existing-family") {
+    await connectExistingFamilyByCode(form);
     return;
   }
   if (form.dataset.form === "family-settings") saveFamilySettings(form);
@@ -4659,13 +4806,33 @@ function familyCodeDocRef(code = state.familyCode) {
   );
 }
 
+function userFamilyLinkRef(uid = cloud.authUser?.uid) {
+  if (!cloud.doc || !uid) return null;
+  return cloud.doc(cloud.db, "users", uid, "familyLinks", "default");
+}
+
 async function resolvePendingFamilyCode() {
   const code = normalizeFamilyCode(pendingFamilyCode());
   if (!code || !cloud.getDoc || !cloud.doc) return null;
+  const familyId = await familyIdForCode(code);
+  if (!familyId) return null;
+  state.cloudFamilyId = familyId;
+  state.familyId = familyId;
+  state.familyCode = code;
+  cloud.familyCodeLookupStatus = `fant ${familyId}`;
+  cloud.familyCodeLookupError = "";
+  setCloudDocRef(familyId);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  return familyId;
+}
+
+async function familyIdForCode(code) {
+  const normalizedCode = normalizeFamilyCode(code);
+  if (!normalizedCode || !cloud.getDoc || !cloud.doc) return null;
   try {
-    cloud.familyCodeLookupStatus = `Søker etter ${code}`;
+    cloud.familyCodeLookupStatus = `Søker etter ${normalizedCode}`;
     cloud.familyCodeLookupError = "";
-    const docRef = familyCodeDocRef(code);
+    const docRef = familyCodeDocRef(normalizedCode);
     const snapshot = docRef ? await cloud.getDoc(docRef) : null;
     if (!snapshot?.exists()) {
       cloud.familyCodeLookupStatus = "ikke funnet";
@@ -4679,13 +4846,8 @@ async function resolvePendingFamilyCode() {
       cloud.familyCodeLookupError = "Familiekoden mangler familie-id.";
       return null;
     }
-    state.cloudFamilyId = familyId;
-    state.familyId = familyId;
-    state.familyCode = code;
     cloud.familyCodeLookupStatus = `fant ${familyId}`;
     cloud.familyCodeLookupError = "";
-    setCloudDocRef(familyId);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     return familyId;
   } catch (error) {
     cloud.familyCodeLookupStatus = "feilet";
@@ -4712,6 +4874,41 @@ async function loadBestCloudState() {
   if (!candidates.length) return null;
   candidates.sort((a, b) => remoteStateTime(b.state) - remoteStateTime(a.state));
   return candidates[0].state;
+}
+
+async function loadFamilyFromCloud(familyId, options = {}) {
+  if (!familyId || !cloud.getDoc || !cloud.doc) return false;
+  const docRef = cloudDocRefForFamily(familyId);
+  const snapshot = await cloud.getDoc(docRef);
+  const remoteState = snapshot.exists() ? snapshot.data()?.state : null;
+  if (!remoteState) {
+    cloud.familyCodeLookupError = "Fant familie-id, men ingen familiedata i skyen.";
+    return false;
+  }
+  cloud.applyingRemote = true;
+  const now = new Date().toISOString();
+  state = normalizeRemoteState({
+    ...remoteState,
+    familyCode: options.familyCode || remoteState.familyCode,
+    familyId,
+    cloudFamilyId: familyId,
+    setupCompleted: true,
+    lastCloudSyncAt: now
+  });
+  cloud.remoteRevision = Number(state.cloudRevision) || 0;
+  cloud.lastFetchedAt = now;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  setCloudDocRef(familyId);
+  cloud.applyingRemote = false;
+  subscribeCloudState();
+  clearPendingFamilyCode();
+  view.setupMode = "new";
+  view.setupStep = 0;
+  view.setupDraft = null;
+  view.mode = "home";
+  view.childId = null;
+  view.childTab = "tasks";
+  return true;
 }
 
 function cloudFamilyCandidates() {
@@ -5122,6 +5319,9 @@ async function writeCloudState() {
     cloud.familyCodeLookupError = error?.message || "Kunne ikke lagre familiekode-register.";
     console.warn("Family code index write failed:", error);
   });
+  await writeUserFamilyLink().catch((error) => {
+    console.warn("User family link write failed:", error);
+  });
   return { saved: true };
 }
 
@@ -5135,6 +5335,23 @@ async function writeFamilyCodeIndex() {
     cloudFamilyId: cloudFamilyId(),
     familyName: state.familyName || "",
     ownerUid: state.ownerUid || null,
+    updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
+  }, { merge: true });
+}
+
+async function writeUserFamilyLink() {
+  const uid = cloud.authUser?.uid;
+  if (!cloud.setDoc || !uid || cloud.authUser?.isAnonymous || !state.setupCompleted) return;
+  const linkRef = userFamilyLinkRef(uid);
+  if (!linkRef) return;
+  const role = state.ownerUid === uid ? "owner" : activeAdultUsers().find((user) => user.uid === uid)?.role || "adult";
+  await cloud.setDoc(linkRef, {
+    familyId: state.familyId || cloudFamilyId(),
+    cloudFamilyId: cloudFamilyId(),
+    familyName: state.familyName || "",
+    familyCode: state.familyCode || "",
+    role,
+    appVersion: APP_VERSION,
     updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
   }, { merge: true });
 }
