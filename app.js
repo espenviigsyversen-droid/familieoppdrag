@@ -2,10 +2,11 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "85";
+const APP_VERSION = "86";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
+const DEVELOPER_ADMIN_EMAILS = ["espen.viig.syversen@gmail.com"];
 const APP_CONFIG = {
   appName: "Familieoppdrag",
   environment: "production",
@@ -15,6 +16,7 @@ const APP_CONFIG = {
     provider: "firebase",
     stateCollection: "families",
     codeCollection: "familyCodes",
+    adminHealthCollection: "adminFamilyHealth",
     stateSubcollection: "appState",
     stateDocument: "current",
     pinnedFamilyId: "familieoppdrag",
@@ -81,6 +83,7 @@ const cloud = {
   adminFamilies: [],
   adminStatus: "",
   adminError: "",
+  adminSource: "adminFamilyHealth",
   minSupportedAppVersion: MIN_SUPPORTED_APP_VERSION,
   versionBlocked: false,
   versionBlockedMessage: "",
@@ -255,7 +258,8 @@ let view = {
   appUpdateReloading: false,
   serviceWorkerRegistration: null,
   serviceWorkerWaiting: null,
-  scrollTopPending: true
+  scrollTopPending: true,
+  adminPortal: adminPortalRequested()
 };
 
 let previousView = { mode: view.mode, childId: view.childId, childTab: view.childTab };
@@ -472,6 +476,8 @@ function syncFamilyCodeInvite() {
 function render() {
   if (view.booting) {
     renderLoading();
+  } else if (view.adminPortal) {
+    renderDeveloperAdminPortal();
   } else if (isSetupPreview()) {
     renderSetup();
   } else if (pendingFamilyCode() && state.setupCompleted) {
@@ -489,6 +495,11 @@ function render() {
   }
   renderGlobalOverlays();
   scrollToTopIfNeeded();
+}
+
+function adminPortalRequested() {
+  const params = new URLSearchParams(window.location.search);
+  return params.has("admin") || params.get("view") === "admin";
 }
 
 function renderGlobalOverlays() {
@@ -517,6 +528,56 @@ function renderLoading() {
       </div>
       <div class="loading-bar" aria-hidden="true"><span></span></div>
     </section>
+  `;
+}
+
+function renderDeveloperAdminPortal() {
+  const canRead = isDeveloperAdmin();
+  app.innerHTML = `
+    <main class="app-layout admin-portal-layout">
+      <header class="app-header adult-header">
+        <div class="brand">
+          <div class="logo">🔐</div>
+          <div>
+            <p class="eyebrow">Utvikleradmin</p>
+            <h1>Driftsstatus</h1>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span class="pill ${canRead ? "done" : "pending"}">${canRead ? "Admin innlogget" : "Google kreves"}</span>
+          <button class="btn secondary" type="button" data-action="leave-admin-portal">Til appen</button>
+        </div>
+      </header>
+      <section class="panel">
+        <div class="section-title compact-title">
+          <div>
+            <h2>Pilotfamilier</h2>
+            <p class="muted">Teknisk status uten barnenavn, oppgaveinnhold eller detaljert aktivitet.</p>
+          </div>
+        </div>
+        <div class="setup-note">
+          Dette panelet leser kun anonymisert driftsmetadata fra <strong>${escapeText(adminHealthCollectionName())}</strong>: appversjon, siste synk, revisjon, backupstatus, feil og antall elementer.
+        </div>
+        ${canRead ? "" : `
+          <div class="auth-status-card pending">
+            <div>
+              <strong>Kun utvikleradmin</strong>
+              <small>Logg inn med ${escapeText(DEVELOPER_ADMIN_EMAILS[0])} for å se driftsstatus.</small>
+            </div>
+            <button class="btn secondary" type="button" data-action="developer-admin-login">Logg inn med Google</button>
+          </div>
+        `}
+        <div class="actions" style="margin-top:14px">
+          <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent driftsstatus</button>
+          <button class="btn secondary" data-action="copy-admin-summary" ${cloud.adminFamilies.length ? "" : "disabled"}>Kopier oversikt</button>
+          <button class="btn secondary" data-action="force-cloud-save">Send status for denne familien</button>
+        </div>
+        ${cloud.adminStatus ? `<p class="small">${escapeText(cloud.adminStatus)}</p>` : ""}
+        ${cloud.adminError ? `<p class="small">Admin-feil: ${escapeText(cloud.adminError)}</p>` : ""}
+        ${cloud.adminError ? adminRulesHint() : ""}
+        ${cloud.adminFamilies.length ? adminFamilyTable() : `<div class="empty">Ingen driftsstatus hentet i denne økten.</div>`}
+      </section>
+    </main>
   `;
 }
 
@@ -2304,6 +2365,17 @@ function settingsHelpGuide() {
               <dd>Nullstilling starter enheten/familien på nytt og krever voksen-PIN. Brukes med varsomhet.</dd>
             </dl>
           </article>
+          <article class="help-card">
+            <h3>Driftsstatus</h3>
+            <dl>
+              <dt>Hva deles</dt>
+              <dd>Appen kan sende enkel teknisk status til utvikler: appversjon, siste synk, backupstatus, feil og antall barn/oppgaver/fullføringer.</dd>
+              <dt>Hva deles ikke</dt>
+              <dd>Barnenavn, oppgaveinnhold, belønninger, stjerner per barn og detaljert aktivitet vises ikke i driftspanelet.</dd>
+              <dt>Hvorfor</dt>
+              <dd>Dette gjør det enklere å oppdage synkfeil og gamle appversjoner hos pilotfamilier uten innsyn i familiens bruk.</dd>
+            </dl>
+          </article>
         </div>
       </section>
     </section>
@@ -2952,21 +3024,21 @@ function restoreBackupModal(backupId) {
 }
 
 function settingsAdmin() {
-  const canRead = isCurrentOwner();
+  const canRead = isDeveloperAdmin();
   const currentSnapshot = currentFamilyAdminSnapshot();
   return `
     <section class="panel">
       <div class="section-title compact-title">
         <div>
           <h2>Drift/admin</h2>
-          <p class="muted">Oversikt over familier som finnes i familiekode-registeret.</p>
+          <p class="muted">Teknisk status for pilotfamilier uten innsyn i barnas innhold.</p>
         </div>
         ${settingsBackButton("advanced")}
       </div>
       <div class="setup-note ${canRead ? "" : "warning-note"}">
         ${canRead
-          ? "Denne visningen leser driftsmetadata fra familyCodes. Den endrer ikke familiedata."
-          : "Drift/admin krever at denne enheten er logget inn som Google-eier. Du kan fortsatt bruke resten av appen anonymt."}
+          ? `Denne visningen leser driftsmetadata fra ${adminHealthCollectionName()}. Den endrer ikke familiedata.`
+          : `Drift/admin krever Google-innlogging som utvikleradmin (${DEVELOPER_ADMIN_EMAILS[0]}). Du kan fortsatt bruke resten av appen normalt.`}
       </div>
       <div class="admin-local-snapshot">
         <div>
@@ -2988,11 +3060,11 @@ function settingsAdmin() {
             <strong>Google-eier kreves</strong>
             <small>${escapeText(googleOwnerLabel())}</small>
           </div>
-          <button class="btn secondary" type="button" data-action="google-owner-login">Logg inn som eier</button>
+          <button class="btn secondary" type="button" data-action="developer-admin-login">Logg inn med Google</button>
         </div>
       `}
       <div class="actions" style="margin-top:14px">
-        <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent familier</button>
+        <button class="btn secondary" data-action="load-admin-families" ${canRead ? "" : "disabled"}>Hent driftsstatus</button>
         <button class="btn secondary" data-action="load-current-admin-family">Vis denne familien</button>
         <button class="btn secondary" data-action="copy-admin-summary" ${cloud.adminFamilies.length ? "" : "disabled"}>Kopier oversikt</button>
       </div>
@@ -3007,7 +3079,7 @@ function settingsAdmin() {
 function adminRulesHint() {
   return `
     <div class="setup-note warning-note">
-      Hvis du vil se alle familier her, må Firestore rules tillate eier/admin å lese <strong>familyCodes</strong>.
+      Hvis du vil se alle familier her, må Firestore rules tillate utvikleradmin å lese <strong>${escapeText(adminHealthCollectionName())}</strong>.
       Inntil videre kan du bruke <strong>Vis denne familien</strong> for trygg lokal drift uten ekstra rules.
     </div>
   `;
@@ -3034,10 +3106,10 @@ function adminFamilyTable() {
               <td>
                 <strong>${escapeText(family.familyName || "-")}</strong>
                 <div class="small">${escapeText(family.cloudFamilyId || family.familyId || "-")}</div>
-                <div class="small">${escapeText(family.code || family.id || "-")}</div>
+                <div class="small">${escapeText(family.source || cloud.adminSource || adminHealthCollectionName())}</div>
               </td>
               <td>${escapeText(family.appVersion || "-")}</td>
-              <td>${formatMaybeDate(family.lastCloudSyncAt || family.updatedAt)}</td>
+              <td>${formatMaybeDate(family.lastCloudSyncAt || family.lastSeenAt || family.updatedAt)}</td>
               <td>${Number(family.cloudRevision) || 0}</td>
               <td>${Number(family.childrenCount) || 0} barn<br>${Number(family.tasksCount) || 0} oppg.<br>${Number(family.completionsCount) || 0} fullf.</td>
               <td>${family.lastBackupAt ? formatMaybeDate(family.lastBackupAt) : "-"}<br>rev. ${Number(family.lastBackupRevision) || 0}</td>
@@ -3052,12 +3124,16 @@ function adminFamilyTable() {
 
 function adminFamilyStatusClass(family) {
   if (family.error || family.lastError) return "rejected";
+  if (appVersionNumber(family.appVersion) < appVersionNumber(family.minSupportedAppVersion || MIN_SUPPORTED_APP_VERSION)) return "warning";
+  if (family.pendingSave) return "pending";
   if (!family.lastCloudSyncAt && !family.updatedAt) return "pending";
   return "done";
 }
 
 function adminFamilyStatusLabel(family) {
   if (family.error || family.lastError) return family.error || family.lastError;
+  if (appVersionNumber(family.appVersion) < appVersionNumber(family.minSupportedAppVersion || MIN_SUPPORTED_APP_VERSION)) return "Bør oppdatere";
+  if (family.pendingSave) return "Venter på lagring";
   if (!family.lastCloudSyncAt && !family.updatedAt) return "Mangler synk";
   return "OK";
 }
@@ -4552,6 +4628,15 @@ function isCurrentOwner() {
   return hasOwnerAccess();
 }
 
+function isDeveloperAdmin() {
+  const email = (cloud.authUser?.email || "").toLowerCase();
+  return Boolean(email && !cloud.authUser?.isAnonymous && DEVELOPER_ADMIN_EMAILS.includes(email));
+}
+
+function adminHealthCollectionName() {
+  return APP_CONFIG.cloudSync.adminHealthCollection || "adminFamilyHealth";
+}
+
 function currentRoleLabel() {
   if (hasOwnerAccess()) return "Du er eier";
   const adult = currentAdultUser();
@@ -4680,6 +4765,30 @@ async function signInGoogleOwner() {
       return;
     }
     cloud.error = error?.message || "Kunne ikke logge inn med Google";
+    showToast("Google-innlogging feilet.");
+    render();
+  }
+}
+
+async function signInDeveloperAdmin() {
+  if (!cloud.auth || !cloud.GoogleAuthProvider || !cloud.signInWithPopup) {
+    showToast("Google-innlogging er ikke klar ennå.");
+    return;
+  }
+  try {
+    const provider = new cloud.GoogleAuthProvider();
+    provider.setCustomParameters?.({ prompt: "select_account" });
+    const result = await cloud.signInWithPopup(cloud.auth, provider);
+    cloud.authUser = normalizeAuthUser(result.user);
+    if (!isDeveloperAdmin()) {
+      showToast("Denne Google-kontoen har ikke admin-tilgang.");
+    } else {
+      showToast("Utvikleradmin er innlogget.");
+      loadAdminFamilies();
+    }
+    render();
+  } catch (error) {
+    cloud.error = error?.message || "Kunne ikke logge inn som utvikleradmin";
     showToast("Google-innlogging feilet.");
     render();
   }
@@ -5616,6 +5725,9 @@ app.addEventListener("click", (event) => {
   if (action === "google-owner-login") {
     signInGoogleOwner();
   }
+  if (action === "developer-admin-login") {
+    signInDeveloperAdmin();
+  }
   if (action === "existing-family-google-login") {
     signInExistingFamilyWithGoogle();
   }
@@ -5659,6 +5771,11 @@ app.addEventListener("click", (event) => {
   }
   if (action === "settings-page") {
     view.settingsPage = button.dataset.page || "menu";
+    render();
+  }
+  if (action === "leave-admin-portal") {
+    view.adminPortal = false;
+    window.history.replaceState({}, "", window.location.pathname);
     render();
   }
   if (action === "load-admin-families") {
@@ -6191,8 +6308,8 @@ async function listCloudBackups() {
 }
 
 async function loadAdminFamilies() {
-  if (!isCurrentOwner()) {
-    showToast("Bare Google-eier kan hente adminoversikt.");
+  if (!isDeveloperAdmin()) {
+    showToast("Bare utvikleradmin kan hente driftsstatus.");
     return;
   }
   if (!cloud.ready || !cloud.getDocs || !cloud.collection) {
@@ -6203,23 +6320,24 @@ async function loadAdminFamilies() {
     cloud.adminStatus = "Henter familier ...";
     cloud.adminError = "";
     render();
-    const collectionName = APP_CONFIG.cloudSync.codeCollection || "familyCodes";
+    const collectionName = adminHealthCollectionName();
     const collectionRef = cloud.collection(cloud.db, collectionName);
     const snapshot = await cloud.getDocs(collectionRef);
     const families = (snapshot.docs || [])
       .map((doc) => ({ id: doc.id, ...(doc.data() || {}) }))
       .sort((a, b) => comparableDateValue(b.lastCloudSyncAt || b.updatedAt) - comparableDateValue(a.lastCloudSyncAt || a.updatedAt));
     cloud.adminFamilies = families;
+    cloud.adminSource = collectionName;
     cloud.adminStatus = families.length ? `Fant ${families.length} familie(r) i ${collectionName}.` : `Ingen familier funnet i ${collectionName}.`;
-    showToast(families.length ? "Adminoversikt hentet." : "Ingen familier funnet.");
+    showToast(families.length ? "Driftsstatus hentet." : "Ingen familier funnet.");
     render();
   } catch (error) {
     cloud.adminStatus = "Kunne ikke hente adminoversikt.";
-    const message = error?.message || "Lesing fra familyCodes feilet.";
+    const message = error?.message || `Lesing fra ${adminHealthCollectionName()} feilet.`;
     cloud.adminError = message.includes("permission") || message.includes("permissions")
-      ? "Firestore-reglene tillater ikke listing av familyCodes. Bruk Vis denne familien, eller åpne for admin-lesing i rules senere."
+      ? `Firestore-reglene tillater ikke listing av ${adminHealthCollectionName()} for utvikleradmin.`
       : message;
-    showToast("Kunne ikke hente adminoversikt.");
+    showToast("Kunne ikke hente driftsstatus.");
     render();
   }
 }
@@ -6233,13 +6351,21 @@ function loadCurrentAdminFamily() {
 }
 
 function currentFamilyAdminSnapshot() {
-  return {
+  return adminHealthPayload({
     id: state.familyCode || cloudFamilyId(),
     code: state.familyCode || "",
+    source: "local"
+  });
+}
+
+function adminHealthPayload(extra = {}) {
+  return {
+    ...extra,
     familyId: state.familyId || cloudFamilyId(),
     cloudFamilyId: cloudFamilyId(),
     familyName: state.familyName || "",
-    ownerUid: state.ownerUid || null,
+    hasGoogleOwner: familyHasGoogleOwner(),
+    adultUsersCount: activeAdultUsers().length,
     appVersion: APP_VERSION,
     minSupportedAppVersion: requiredAppVersion(),
     schemaVersion: state.schemaVersion || SCHEMA_VERSION,
@@ -6252,8 +6378,24 @@ function currentFamilyAdminSnapshot() {
     lastCloudSyncAt: state.lastCloudSyncAt || cloud.lastFetchedAt || cloud.lastSavedAt || null,
     lastBackupAt: cloud.backupLastAt || null,
     lastBackupRevision: Number(cloud.backupLastRevision) || 0,
+    pendingSave: Boolean(cloud.pendingSave),
+    versionBlocked: Boolean(cloud.versionBlocked),
+    staleWriteBlockedAt: cloud.staleWriteBlockedAt || null,
+    lastError: cloud.error || cloud.backupError || cloud.manualFetchError || "",
     updatedAt: state.updatedAt || null
   };
+}
+
+async function writeAdminHealthStatus() {
+  if (!cloud.setDoc || !cloud.doc || !state.setupCompleted) return;
+  const familyId = cloudFamilyId();
+  if (!familyId) return;
+  const docRef = cloud.doc(cloud.db, adminHealthCollectionName(), familyId);
+  await cloud.setDoc(docRef, {
+    ...adminHealthPayload(),
+    id: familyId,
+    lastSeenAt: cloud.serverTimestamp ? cloud.serverTimestamp() : new Date().toISOString()
+  }, { merge: true });
 }
 
 function comparableDateValue(value) {
@@ -6283,9 +6425,9 @@ function adminSummaryText() {
       "",
       `Familie: ${family.familyName || "-"}`,
       `Familie-id: ${family.cloudFamilyId || family.familyId || "-"}`,
-      `Kode: ${family.code || family.id || "-"}`,
       `Appversjon: ${family.appVersion || "-"}`,
-      `Siste synk: ${formatMaybeDate(family.lastCloudSyncAt || family.updatedAt)}`,
+      `Minimum støttet: ${family.minSupportedAppVersion || MIN_SUPPORTED_APP_VERSION}`,
+      `Siste synk: ${formatMaybeDate(family.lastCloudSyncAt || family.lastSeenAt || family.updatedAt)}`,
       `Skyrevisjon: ${Number(family.cloudRevision) || 0}`,
       `Barn/oppgaver/fullføringer: ${Number(family.childrenCount) || 0}/${Number(family.tasksCount) || 0}/${Number(family.completionsCount) || 0}`,
       `Backup: ${family.lastBackupAt ? formatMaybeDate(family.lastBackupAt) : "-"} rev. ${Number(family.lastBackupRevision) || 0}`,
@@ -6886,6 +7028,9 @@ async function writeCloudState() {
     cloud.familyCodeLookupError = error?.message || "Kunne ikke lagre familiekode-register.";
     console.warn("Family code index write failed:", error);
   });
+  await writeAdminHealthStatus().catch((error) => {
+    console.warn("Admin health write failed:", error);
+  });
   await writeUserFamilyLink().catch((error) => {
     console.warn("User family link write failed:", error);
   });
@@ -6903,6 +7048,7 @@ async function writeFamilyCodeIndex() {
     familyName: state.familyName || "",
     ownerUid: state.ownerUid || null,
     appVersion: APP_VERSION,
+    minSupportedAppVersion: requiredAppVersion(),
     schemaVersion: state.schemaVersion || SCHEMA_VERSION,
     cloudRevision: Number(state.cloudRevision) || 0,
     childrenCount: state.children?.length || 0,
