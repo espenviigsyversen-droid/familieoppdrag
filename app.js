@@ -2,8 +2,9 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const NEW_FAMILY_SESSION_KEY = "familieoppdrag.newFamilySession";
+const APP_UPDATE_SUPPRESS_KEY = "familieoppdrag.suppressUpdateUntil";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "93";
+const APP_VERSION = "95";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -57,6 +58,7 @@ const cloud = {
   GoogleAuthProvider: null,
   signInWithPopup: null,
   signInWithRedirect: null,
+  signOut: null,
   unsubscribe: null,
   saveTimer: null,
   pendingSave: false,
@@ -274,7 +276,7 @@ const toast = document.querySelector("#toast");
 
 function loadState() {
   if (newFamilySetupRequested()) {
-    const resetKey = `${window.location.pathname}${window.location.search}`;
+    const resetKey = `${APP_VERSION}:${window.location.pathname}${window.location.search}`;
     if (sessionStorage.getItem(NEW_FAMILY_SESSION_KEY) !== resetKey) {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(DEVICE_PROFILE_KEY);
@@ -819,6 +821,7 @@ function setupStepContent(stepId) {
           </div>
           <button class="btn secondary" type="button" data-action="google-owner-login">${familyHasGoogleOwner() ? "Bytt Google-konto" : "Logg inn med Google"}</button>
         </div>
+        ${familyHasGoogleOwner() && !state.setupCompleted ? `<div class="actions" style="margin-top:12px"><button class="btn secondary" type="button" data-action="clear-setup-google-owner">Fjern valgt Google-konto</button></div>` : ""}
       </div>
     `;
   }
@@ -3624,6 +3627,7 @@ function hideChildReward(id) {
 }
 
 async function refreshApp() {
+  suppressAppUpdateBanner();
   view.appUpdateAvailable = false;
   view.appUpdateReloading = true;
   view.serviceWorkerWaiting = null;
@@ -3637,6 +3641,7 @@ async function refreshApp() {
 }
 
 async function applyAppUpdate() {
+  suppressAppUpdateBanner();
   view.appUpdateReloading = true;
   view.appUpdateAvailable = false;
   view.serviceWorkerWaiting = null;
@@ -3683,12 +3688,31 @@ function reloadWithoutAppCache() {
 }
 
 function markAppUpdateAvailable(registration) {
-  if (view.appUpdateReloading) return;
+  if (view.appUpdateReloading || isAppUpdateBannerSuppressed()) return;
   view.serviceWorkerRegistration = registration || view.serviceWorkerRegistration;
   view.serviceWorkerWaiting = registration?.waiting || view.serviceWorkerWaiting;
   view.appUpdateAvailable = true;
   view.appUpdateInstalling = false;
   if (!view.booting) render();
+}
+
+function suppressAppUpdateBanner(minutes = 5) {
+  try {
+    sessionStorage.setItem(APP_UPDATE_SUPPRESS_KEY, String(Date.now() + minutes * 60 * 1000));
+  } catch {
+    // Session storage can be unavailable in some embedded browsers.
+  }
+}
+
+function isAppUpdateBannerSuppressed() {
+  try {
+    const until = Number(sessionStorage.getItem(APP_UPDATE_SUPPRESS_KEY)) || 0;
+    if (until > Date.now()) return true;
+    if (until) sessionStorage.removeItem(APP_UPDATE_SUPPRESS_KEY);
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function awardPoints(childId, amount, description, sourceId = null, type = "manual") {
@@ -4583,6 +4607,7 @@ function syncStatusBanner() {
 
 function syncBannerStatus() {
   if (view.appUpdateReloading) return null;
+  if (isAppUpdateBannerSuppressed()) return null;
   if (view.appUpdateAvailable) {
     return {
       kind: "update",
@@ -4902,6 +4927,21 @@ async function signInGoogleOwner() {
     showToast("Google-innlogging feilet.");
     render();
   }
+}
+
+async function clearSetupGoogleOwner(options = {}) {
+  if (state.setupCompleted) return false;
+  state.ownerUid = null;
+  state.adultUsers = [];
+  cloud.authUser = null;
+  if (options.signOut !== false && cloud.auth && cloud.signOut) {
+    await cloud.signOut(cloud.auth).catch((error) => {
+      console.warn("Could not sign out setup owner:", error);
+    });
+  }
+  state.updatedAt = new Date().toISOString();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  return true;
 }
 
 async function signInDeveloperAdmin() {
@@ -5906,6 +5946,12 @@ app.addEventListener("click", (event) => {
   if (action === "google-owner-login") {
     signInGoogleOwner();
   }
+  if (action === "clear-setup-google-owner") {
+    clearSetupGoogleOwner().then((cleared) => {
+      if (cleared) showToast("Valgt Google-konto er fjernet.");
+      render();
+    });
+  }
   if (action === "developer-admin-login") {
     signInDeveloperAdmin();
   }
@@ -6183,7 +6229,7 @@ async function initFirebaseSync() {
   try {
     view.bootMessage = "Kobler til Firestore";
     render();
-    const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult }, { getFirestore, doc, collection, query, where, limit, getDoc, getDocs, setDoc, runTransaction, onSnapshot, serverTimestamp }] = await Promise.all([
+    const [{ initializeApp }, { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut }, { getFirestore, doc, collection, query, where, limit, getDoc, getDocs, setDoc, runTransaction, onSnapshot, serverTimestamp }] = await Promise.all([
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js"),
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js"),
       import("https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js")
@@ -6197,6 +6243,7 @@ async function initFirebaseSync() {
     cloud.GoogleAuthProvider = GoogleAuthProvider;
     cloud.signInWithPopup = signInWithPopup;
     cloud.signInWithRedirect = signInWithRedirect;
+    cloud.signOut = signOut;
     cloud.doc = doc;
     cloud.collection = collection;
     cloud.query = query;
@@ -6210,15 +6257,20 @@ async function initFirebaseSync() {
     cloud.serverTimestamp = serverTimestamp;
     setCloudDocRef();
 
+    let handledOwnerRedirect = false;
     await getRedirectResult(auth).then((result) => {
       if (result?.user && !result.user.isAnonymous) {
         cloud.authUser = normalizeAuthUser(result.user);
         registerGoogleAdult(result.user, "owner");
+        handledOwnerRedirect = true;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       }
     }).catch((error) => {
       console.warn("Google redirect result unavailable:", error);
     });
+    if (newFamilySetupRequested() && !state.setupCompleted && !handledOwnerRedirect) {
+      await clearSetupGoogleOwner({ signOut: true });
+    }
 
     await new Promise((resolve, reject) => {
       let anonymousStarted = false;
@@ -7313,9 +7365,6 @@ async function registerServiceWorkerAndUpdate() {
     refreshing = true;
     if (view.appUpdateReloading) {
       window.location.reload();
-    } else {
-      view.appUpdateAvailable = true;
-      if (!view.booting) render();
     }
   });
   try {
