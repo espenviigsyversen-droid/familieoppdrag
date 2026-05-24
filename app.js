@@ -3,9 +3,10 @@ const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const NEW_FAMILY_SESSION_KEY = "familieoppdrag.newFamilySession";
 const NEW_FAMILY_COMPLETED_KEY = "familieoppdrag.newFamilyCompleted";
+const EXISTING_FAMILY_REDIRECT_KEY = "familieoppdrag.existingFamilyRedirect";
 const APP_UPDATE_SUPPRESS_KEY = "familieoppdrag.suppressUpdateUntil";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "97";
+const APP_VERSION = "98";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -4946,9 +4947,7 @@ async function signInGoogleOwner() {
     showToast("Google-eier er koblet til familien.");
     render();
   } catch (error) {
-    const code = error?.code || "";
-    const shouldTryRedirect = code.includes("popup-blocked") || code.includes("operation-not-supported") || code.includes("web-storage");
-    if (cloud.signInWithRedirect && shouldTryRedirect) {
+    if (cloud.signInWithRedirect && shouldUseGoogleRedirect(error)) {
       const provider = new cloud.GoogleAuthProvider();
       await cloud.signInWithRedirect(cloud.auth, provider);
       return;
@@ -4972,6 +4971,14 @@ async function clearSetupGoogleOwner(options = {}) {
   state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   return true;
+}
+
+function shouldUseGoogleRedirect(error) {
+  const code = error?.code || "";
+  return code.includes("popup-blocked")
+    || code.includes("operation-not-supported")
+    || code.includes("web-storage")
+    || code.includes("unauthorized-domain");
 }
 
 async function signInDeveloperAdmin() {
@@ -5039,38 +5046,51 @@ async function signInExistingFamilyWithGoogle() {
     const provider = new cloud.GoogleAuthProvider();
     provider.setCustomParameters?.({ prompt: "select_account" });
     const result = await cloud.signInWithPopup(cloud.auth, provider);
-    cloud.authUser = normalizeAuthUser(result.user);
-    const linkRef = userFamilyLinkRef(result.user.uid);
-    const snapshot = linkRef ? await cloud.getDoc(linkRef) : null;
-    let data = snapshot?.exists() ? snapshot.data() : null;
-    if (!data?.cloudFamilyId && !data?.familyId) {
-      data = await findFamilyLinkByOwner(result.user);
-    }
-    const familyId = data?.cloudFamilyId || data?.familyId || "";
-    if (!familyId) {
-      cloud.error = "Fant ingen familie koblet til denne Google-kontoen. Bruk familiekode, eller åpne appen én gang som eier på en enhet som allerede er koblet til.";
-      showToast("Fant ingen familie på Google-kontoen.");
-      render();
-      return;
-    }
-    const loaded = await loadFamilyFromCloud(familyId, { familyCode: data.familyCode || "" });
-    if (!loaded) {
-      showToast("Fant ikke familiedata i skyen.");
-      render();
-      return;
-    }
-    registerGoogleAdult(result.user, data.role || "adult");
-    saveState();
-    await writeUserFamilyLink().catch((error) => {
-      console.warn("Could not refresh user family link:", error);
-    });
-    showToast("Familien er hentet fra Google-kontoen.");
-    render();
+    await connectExistingFamilyWithGoogleUser(result.user);
   } catch (error) {
+    if (cloud.signInWithRedirect && shouldUseGoogleRedirect(error)) {
+      sessionStorage.setItem(EXISTING_FAMILY_REDIRECT_KEY, "1");
+      const provider = new cloud.GoogleAuthProvider();
+      provider.setCustomParameters?.({ prompt: "select_account" });
+      await cloud.signInWithRedirect(cloud.auth, provider);
+      return;
+    }
     cloud.error = error?.message || "Kunne ikke logge inn med Google";
     showToast("Google-innlogging feilet.");
     render();
   }
+}
+
+async function connectExistingFamilyWithGoogleUser(user) {
+  if (!user || user.isAnonymous) return false;
+  cloud.authUser = normalizeAuthUser(user);
+  const linkRef = userFamilyLinkRef(user.uid);
+  const snapshot = linkRef ? await cloud.getDoc(linkRef) : null;
+  let data = snapshot?.exists() ? snapshot.data() : null;
+  if (!data?.cloudFamilyId && !data?.familyId) {
+    data = await findFamilyLinkByOwner(user);
+  }
+  const familyId = data?.cloudFamilyId || data?.familyId || "";
+  if (!familyId) {
+    cloud.error = "Fant ingen familie koblet til denne Google-kontoen. Bruk familiekode, eller åpne appen én gang som eier på en enhet som allerede er koblet til.";
+    showToast("Fant ingen familie på Google-kontoen.");
+    render();
+    return false;
+  }
+  const loaded = await loadFamilyFromCloud(familyId, { familyCode: data.familyCode || "" });
+  if (!loaded) {
+    showToast("Fant ikke familiedata i skyen.");
+    render();
+    return false;
+  }
+  registerGoogleAdult(user, data.role || "adult");
+  saveState();
+  await writeUserFamilyLink().catch((error) => {
+    console.warn("Could not refresh user family link:", error);
+  });
+  showToast("Familien er hentet fra Google-kontoen.");
+  render();
+  return true;
 }
 
 async function findFamilyLinkByOwner(user) {
@@ -6288,12 +6308,18 @@ async function initFirebaseSync() {
     setCloudDocRef();
 
     let handledOwnerRedirect = false;
-    await getRedirectResult(auth).then((result) => {
+    await getRedirectResult(auth).then(async (result) => {
       if (result?.user && !result.user.isAnonymous) {
-        cloud.authUser = normalizeAuthUser(result.user);
-        registerGoogleAdult(result.user, "owner");
-        handledOwnerRedirect = true;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        const existingFamilyRedirect = sessionStorage.getItem(EXISTING_FAMILY_REDIRECT_KEY) === "1";
+        sessionStorage.removeItem(EXISTING_FAMILY_REDIRECT_KEY);
+        if (existingFamilyRedirect) {
+          handledOwnerRedirect = await connectExistingFamilyWithGoogleUser(result.user);
+        } else {
+          cloud.authUser = normalizeAuthUser(result.user);
+          registerGoogleAdult(result.user, "owner");
+          handledOwnerRedirect = true;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }
       }
     }).catch((error) => {
       console.warn("Google redirect result unavailable:", error);
