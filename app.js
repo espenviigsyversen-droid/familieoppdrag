@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "90";
+const APP_VERSION = "91";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -253,6 +253,10 @@ let view = {
   badgeCelebration: null,
   restoreBackupId: null,
   gate: null,
+  pinResetMode: false,
+  pinResetVerified: false,
+  pinResetUser: null,
+  pinResetError: "",
   appUpdateAvailable: false,
   appUpdateInstalling: false,
   appUpdateReloading: false,
@@ -1479,6 +1483,10 @@ function renderAdult() {
 }
 
 function renderPinModal() {
+  if (view.pinResetMode) {
+    renderPinResetModal();
+    return;
+  }
   app.innerHTML = `
     <header class="topbar">
       <div class="brand">
@@ -1500,6 +1508,50 @@ function renderPinModal() {
         <div class="actions" style="margin-top:14px">
           <button class="btn" type="submit">Åpne</button>
           <button class="btn secondary" type="button" data-action="cancel-adult-login">Avbryt</button>
+        </div>
+        <button class="btn secondary" type="button" data-action="forgot-pin">Glemt PIN?</button>
+      </form>
+    </div>
+  `;
+}
+
+function renderPinResetModal() {
+  const verified = Boolean(view.pinResetVerified);
+  const userLabel = view.pinResetUser?.email || view.pinResetUser?.name || "";
+  app.innerHTML = `
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">🔐</div>
+        <div>
+          <p class="eyebrow">Familieoppdrag</p>
+          <h1>Nullstill PIN</h1>
+        </div>
+      </div>
+      <button class="btn secondary" data-action="cancel-pin-reset">Tilbake</button>
+    </header>
+    <div class="modal-backdrop">
+      <form class="modal" data-form="pin-reset">
+        <h2>Lag ny voksen-PIN</h2>
+        <p class="muted">Logg inn med Google-kontoen som er voksen i familien før du setter ny PIN.</p>
+        ${view.pinResetError ? `<div class="setup-note warning-note">${escapeText(view.pinResetError)}</div>` : ""}
+        <div class="auth-status-card ${verified ? "done" : "pending"}">
+          <div>
+            <strong>${verified ? "Google-konto bekreftet" : "Google-bekreftelse kreves"}</strong>
+            <small>${verified ? escapeText(userLabel) : "Bare registrert voksen/eier i denne familien kan nullstille PIN."}</small>
+          </div>
+          <button class="btn secondary" type="button" data-action="google-pin-reset-login">${verified ? "Bytt konto" : "Logg inn med Google"}</button>
+        </div>
+        <div class="field">
+          <label>Ny PIN</label>
+          <input name="newPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" ${verified ? "required autofocus" : "disabled"}>
+        </div>
+        <div class="field">
+          <label>Gjenta ny PIN</label>
+          <input name="repeatPin" type="password" inputmode="numeric" autocomplete="new-password" minlength="4" ${verified ? "required" : "disabled"}>
+        </div>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn" type="submit" ${verified ? "" : "disabled"}>Lagre ny PIN</button>
+          <button class="btn secondary" type="button" data-action="cancel-pin-reset">Avbryt</button>
         </div>
       </form>
     </div>
@@ -4636,6 +4688,23 @@ function currentAdultUser() {
   return activeAdultUsers().find((user) => user.uid === uid) || null;
 }
 
+function adultUserForAuth(user) {
+  if (!user || user.isAnonymous) return null;
+  const email = (user.email || "").toLowerCase();
+  return activeAdultUsers().find((adult) =>
+    adult.uid === user.uid || (email && (adult.email || "").toLowerCase() === email)
+  ) || null;
+}
+
+function canResetPinWithAuth(user) {
+  if (!user || user.isAnonymous) return false;
+  const adult = adultUserForAuth(user);
+  const owner = familyOwner();
+  const email = (user.email || "").toLowerCase();
+  const ownerMatch = Boolean(owner && (owner.uid === user.uid || (email && (owner.email || "").toLowerCase() === email)));
+  return Boolean(adult || ownerMatch);
+}
+
 function hasOwnerAccess() {
   const uid = cloud.authUser?.uid;
   return Boolean(uid && state.ownerUid === uid && familyOwner()?.uid === uid);
@@ -4806,6 +4875,38 @@ async function signInDeveloperAdmin() {
     render();
   } catch (error) {
     cloud.error = error?.message || "Kunne ikke logge inn som utvikleradmin";
+    showToast("Google-innlogging feilet.");
+    render();
+  }
+}
+
+async function signInForPinReset() {
+  if (!cloud.auth || !cloud.GoogleAuthProvider || !cloud.signInWithPopup) {
+    view.pinResetError = "Google-innlogging er ikke klar ennå. Prøv igjen om litt.";
+    render();
+    return;
+  }
+  try {
+    const provider = new cloud.GoogleAuthProvider();
+    provider.setCustomParameters?.({ prompt: "select_account" });
+    const result = await cloud.signInWithPopup(cloud.auth, provider);
+    const user = normalizeAuthUser(result.user);
+    cloud.authUser = user;
+    if (!canResetPinWithAuth(user)) {
+      view.pinResetVerified = false;
+      view.pinResetUser = user;
+      view.pinResetError = "Denne Google-kontoen er ikke registrert som voksen i familien.";
+      showToast("Google-kontoen har ikke tilgang til PIN-reset.");
+      render();
+      return;
+    }
+    view.pinResetVerified = true;
+    view.pinResetUser = user;
+    view.pinResetError = "";
+    showToast("Google-konto bekreftet.");
+    render();
+  } catch (error) {
+    view.pinResetError = error?.message || "Google-innlogging feilet.";
     showToast("Google-innlogging feilet.");
     render();
   }
@@ -5606,6 +5707,20 @@ app.addEventListener("click", (event) => {
     view.gate = null;
     render();
   }
+  if (action === "forgot-pin") {
+    view.pinResetMode = true;
+    view.pinResetVerified = false;
+    view.pinResetUser = null;
+    view.pinResetError = "";
+    render();
+  }
+  if (action === "cancel-pin-reset") {
+    view.pinResetMode = false;
+    view.pinResetVerified = false;
+    view.pinResetUser = null;
+    view.pinResetError = "";
+    render();
+  }
   if (action === "open-child") {
     if (getChild(child)?.active === false) return;
     view.mode = "child";
@@ -5744,6 +5859,9 @@ app.addEventListener("click", (event) => {
   }
   if (action === "developer-admin-login") {
     signInDeveloperAdmin();
+  }
+  if (action === "google-pin-reset-login") {
+    signInForPinReset();
   }
   if (action === "existing-family-google-login") {
     signInExistingFamilyWithGoogle();
@@ -5928,6 +6046,33 @@ app.addEventListener("submit", async (event) => {
     state.parentPinHash = await hashPin(newPin);
     saveState();
     form.reset();
+    showToast("PIN-koden er endret.");
+    render();
+  }
+  if (form.dataset.form === "pin-reset") {
+    if (!view.pinResetVerified || !canResetPinWithAuth(view.pinResetUser)) {
+      showToast("Google-konto må bekreftes først.");
+      return;
+    }
+    const data = new FormData(form);
+    const newPin = String(data.get("newPin") || "");
+    const repeatPin = String(data.get("repeatPin") || "");
+    if (newPin.length < 4) {
+      showToast("Ny PIN må ha minst 4 tegn.");
+      return;
+    }
+    if (newPin !== repeatPin) {
+      showToast("Ny PIN er ikke lik i begge feltene.");
+      return;
+    }
+    state.parentPinHash = await hashPin(newPin);
+    view.pinResetMode = false;
+    view.pinResetVerified = false;
+    view.pinResetUser = null;
+    view.pinResetError = "";
+    view.adultUnlocked = true;
+    view.adultTab = "settings";
+    saveState();
     showToast("PIN-koden er endret.");
     render();
   }
