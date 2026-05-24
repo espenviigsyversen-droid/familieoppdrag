@@ -778,12 +778,12 @@ button:disabled {
 
 .share-checklist {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 10px;
 }
 
 .share-checklist.expanded {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
 }
 
 .share-check {
@@ -795,6 +795,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
+  min-width: 0;
 }
 
 .share-check.done {
@@ -825,11 +826,17 @@ button:disabled {
 .share-check span:last-child {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .share-check small {
   color: var(--muted);
   line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.share-check strong {
+  overflow-wrap: anywhere;
 }
 
 .share-check span.share-check-actions {
@@ -1923,6 +1930,30 @@ th {
   .auth-status-card {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .share-ready-panel .section-title {
+    align-items: flex-start;
+  }
+
+  .share-check {
+    grid-template-columns: 34px minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .share-check-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .share-check span.share-check-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .share-check-actions .btn,
+  .share-check-actions button {
+    width: 100%;
   }
 
   .brand-mark,
