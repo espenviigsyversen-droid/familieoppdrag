@@ -2,7 +2,7 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "91";
+const APP_VERSION = "92";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -3610,6 +3610,10 @@ function hideChildReward(id) {
 }
 
 async function refreshApp() {
+  view.appUpdateAvailable = false;
+  view.appUpdateReloading = true;
+  view.serviceWorkerWaiting = null;
+  render();
   showToast("Oppdaterer appen ...");
   try {
     await hardRefreshAppShell();
@@ -3620,6 +3624,8 @@ async function refreshApp() {
 
 async function applyAppUpdate() {
   view.appUpdateReloading = true;
+  view.appUpdateAvailable = false;
+  view.serviceWorkerWaiting = null;
   render();
   showToast("Oppdaterer appen ...");
   try {
@@ -3657,9 +3663,13 @@ function reloadWithoutAppCache() {
   const url = new URL(window.location.href);
   url.searchParams.set("appRefresh", Date.now().toString());
   window.location.replace(url.toString());
+  window.setTimeout(() => {
+    window.location.href = url.toString();
+  }, 1200);
 }
 
 function markAppUpdateAvailable(registration) {
+  if (view.appUpdateReloading) return;
   view.serviceWorkerRegistration = registration || view.serviceWorkerRegistration;
   view.serviceWorkerWaiting = registration?.waiting || view.serviceWorkerWaiting;
   view.appUpdateAvailable = true;
@@ -4551,6 +4561,7 @@ function syncStatusBanner() {
 }
 
 function syncBannerStatus() {
+  if (view.appUpdateReloading) return null;
   if (view.appUpdateAvailable) {
     return {
       kind: "update",
