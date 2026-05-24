@@ -2,9 +2,10 @@ const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
 const NEW_FAMILY_SESSION_KEY = "familieoppdrag.newFamilySession";
+const NEW_FAMILY_COMPLETED_KEY = "familieoppdrag.newFamilyCompleted";
 const APP_UPDATE_SUPPRESS_KEY = "familieoppdrag.suppressUpdateUntil";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "95";
+const APP_VERSION = "96";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -276,11 +277,23 @@ const toast = document.querySelector("#toast");
 
 function loadState() {
   if (newFamilySetupRequested()) {
-    const resetKey = `${APP_VERSION}:${window.location.pathname}${window.location.search}`;
-    if (sessionStorage.getItem(NEW_FAMILY_SESSION_KEY) !== resetKey) {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(DEVICE_PROFILE_KEY);
-      sessionStorage.setItem(NEW_FAMILY_SESSION_KEY, resetKey);
+    const completedKey = newFamilyLinkKey();
+    const rawState = localStorage.getItem(STORAGE_KEY);
+    let setupAlreadyCompleted = false;
+    try {
+      setupAlreadyCompleted = Boolean(rawState && JSON.parse(rawState).setupCompleted);
+    } catch {
+      setupAlreadyCompleted = false;
+    }
+    if (localStorage.getItem(NEW_FAMILY_COMPLETED_KEY) === completedKey && setupAlreadyCompleted) {
+      clearNewFamilyUrl();
+    } else {
+      const resetKey = `${APP_VERSION}:${completedKey}`;
+      if (sessionStorage.getItem(NEW_FAMILY_SESSION_KEY) !== resetKey) {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(DEVICE_PROFILE_KEY);
+        sessionStorage.setItem(NEW_FAMILY_SESSION_KEY, resetKey);
+      }
     }
   }
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -323,6 +336,19 @@ function loadState() {
 function newFamilySetupRequested() {
   const params = new URLSearchParams(window.location.search);
   return params.get("nyfamilie") === "1" || params.get("setup") === "new";
+}
+
+function newFamilyLinkKey() {
+  return `${window.location.pathname}${window.location.search}`;
+}
+
+function clearNewFamilyUrl() {
+  if (!newFamilySetupRequested() || !window.history?.replaceState) return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("nyfamilie");
+  if (url.searchParams.get("setup") === "new") url.searchParams.delete("setup");
+  const cleanPath = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, "", cleanPath);
 }
 
 function normalizeLocalState(savedState = {}, existingInstall = true) {
@@ -3972,6 +3998,10 @@ async function completeFirstSetup(form) {
   view.setupDraft = null;
   queueScrollTop();
   localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+  if (newFamilySetupRequested()) {
+    localStorage.setItem(NEW_FAMILY_COMPLETED_KEY, newFamilyLinkKey());
+    clearNewFamilyUrl();
+  }
   saveState();
   showToast("Familien er satt opp. Deling er klar.");
   render();
