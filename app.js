@@ -1,8 +1,9 @@
 const STORAGE_KEY = "familieoppdrag.v1";
 const DEVICE_PROFILE_KEY = "familieoppdrag.deviceProfile";
 const CLOUD_BACKUP_KEY = "familieoppdrag.cloudBackups.v1";
+const NEW_FAMILY_SESSION_KEY = "familieoppdrag.newFamilySession";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "92";
+const APP_VERSION = "93";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -272,6 +273,14 @@ const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
 function loadState() {
+  if (newFamilySetupRequested()) {
+    const resetKey = `${window.location.pathname}${window.location.search}`;
+    if (sessionStorage.getItem(NEW_FAMILY_SESSION_KEY) !== resetKey) {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(DEVICE_PROFILE_KEY);
+      sessionStorage.setItem(NEW_FAMILY_SESSION_KEY, resetKey);
+    }
+  }
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
     try {
@@ -307,6 +316,11 @@ function loadState() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }, false);
+}
+
+function newFamilySetupRequested() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("nyfamilie") === "1" || params.get("setup") === "new";
 }
 
 function normalizeLocalState(savedState = {}, existingInstall = true) {
@@ -3883,8 +3897,11 @@ async function completeFirstSetup(form) {
   const now = new Date().toISOString();
   const ownerUid = state.ownerUid;
   const adultUsers = activeAdultUsers();
+  const owner = familyOwner();
+  const familyId = uniqueFamilyId(familyName, owner?.email || owner?.name || ownerUid);
   state = normalizeLocalState({
-    familyId: uniqueFamilyId(familyName),
+    familyId,
+    cloudFamilyId: familyId,
     familyName,
     familyCode: createFamilyCode(),
     schemaVersion: SCHEMA_VERSION,
@@ -3945,6 +3962,7 @@ function saveFamilySettings(form) {
   if (familyId !== previousFamilyId && !requireOwnerAccess("Bare Google-eier kan endre familie-id.")) return;
   state.familyName = familyName;
   state.familyId = familyId;
+  if (familyId !== previousFamilyId || !state.cloudFamilyId) state.cloudFamilyId = familyId;
   state.familyCode = state.familyCode || createFamilyCode();
   state.setupCompleted = true;
   saveState();
@@ -4082,8 +4100,11 @@ function uniqueChildIdForList(name, previousNames) {
   return id;
 }
 
-function uniqueFamilyId(name) {
-  return `family-${slugify(name) || crypto.randomUUID().slice(0, 8)}`;
+function uniqueFamilyId(name, ownerSeed = "") {
+  const familyPart = slugify(name) || "familie";
+  const ownerPart = slugify(String(ownerSeed || "").split("@")[0] || "");
+  const randomPart = crypto.randomUUID().slice(0, 6);
+  return ["familie", familyPart, ownerPart, randomPart].filter(Boolean).join("-");
 }
 
 function createFamilyCode() {
@@ -4665,10 +4686,10 @@ function cloudPathLabel(familyId = cloudFamilyId()) {
 }
 
 function cloudFamilyId() {
-  if (!state.setupCompleted && !pendingFamilyCode()) {
-    return state.cloudFamilyId || state.familyId || "local-family";
-  }
-  return state.cloudFamilyId || APP_CONFIG.cloudSync.pinnedFamilyId || state.familyId || "local-family";
+  if (state.cloudFamilyId) return state.cloudFamilyId;
+  const familyId = state.familyId || "";
+  if (familyId && familyId !== "local-family") return familyId;
+  return familyId || "local-family";
 }
 
 function suggestedCloudFamilyId() {
@@ -4691,6 +4712,15 @@ function firebaseProjectLabel() {
 
 function activeAdultUsers() {
   return (state.adultUsers || []).filter((user) => user.status !== "removed");
+}
+
+function familyAccessMetadata() {
+  const adults = activeAdultUsers();
+  return {
+    ownerUid: state.ownerUid || null,
+    adultUids: adults.map((user) => user.uid).filter(Boolean),
+    adultEmails: adults.map((user) => (user.email || "").toLowerCase()).filter(Boolean)
+  };
 }
 
 function currentAdultUser() {
@@ -4850,6 +4880,13 @@ async function signInGoogleOwner() {
     const result = await cloud.signInWithPopup(cloud.auth, provider);
     cloud.authUser = normalizeAuthUser(result.user);
     registerGoogleAdult(result.user, "owner");
+    if (!state.setupCompleted) {
+      state.updatedAt = new Date().toISOString();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      showToast("Google-eier er klar.");
+      render();
+      return;
+    }
     saveState();
     showToast("Google-eier er koblet til familien.");
     render();
@@ -5286,6 +5323,7 @@ function newFamilyStartLink() {
   const url = new URL(window.location.href);
   url.search = "";
   url.hash = "";
+  url.searchParams.set("nyfamilie", "1");
   return url.toString();
 }
 
@@ -6195,7 +6233,7 @@ async function initFirebaseSync() {
         }
       }, reject);
     });
-    if (auth.currentUser && !auth.currentUser.isAnonymous && registerGoogleAdult(auth.currentUser, "owner")) {
+    if (auth.currentUser && !auth.currentUser.isAnonymous && state.setupCompleted && registerGoogleAdult(auth.currentUser, "owner")) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
@@ -6376,13 +6414,20 @@ async function loadFamilyFromCloud(familyId, options = {}) {
 
 function cloudFamilyCandidates() {
   if (!state.setupCompleted && !pendingFamilyCode()) {
-    return [cloudFamilyId()];
+    return [];
   }
+  const pinned = APP_CONFIG.cloudSync.pinnedFamilyId || "";
+  const includeLegacy = Boolean(
+    state.cloudMigration?.from
+    || state.cloudMigration?.to
+    || (state.cloudFamilyId && state.cloudFamilyId === pinned)
+    || (state.familyId && state.familyId === pinned)
+  );
   const ids = [
     cloudFamilyId(),
     state.cloudFamilyId,
     state.familyId || "local-family",
-    ...(APP_CONFIG.cloudSync.legacyFamilyIds || [])
+    ...(includeLegacy ? APP_CONFIG.cloudSync.legacyFamilyIds || [] : [])
   ];
   return [...new Set(ids.filter(Boolean))];
 }
@@ -7143,6 +7188,7 @@ async function writeCloudState() {
         familyId: nextState.familyId || "local-family",
         familyName: nextState.familyName || "",
         state: nextState,
+        ...familyAccessMetadata(),
         appVersion: APP_VERSION,
         minSupportedAppVersion,
         cloudRevision: nextRevision,
@@ -7189,6 +7235,7 @@ async function writeCloudState() {
       familyId: state.familyId || "local-family",
       familyName: state.familyName || "",
       state,
+      ...familyAccessMetadata(),
       appVersion: APP_VERSION,
       minSupportedAppVersion,
       cloudRevision: nextRevision,
@@ -7223,7 +7270,7 @@ async function writeFamilyCodeIndex() {
     familyId: cloudFamilyId(),
     cloudFamilyId: cloudFamilyId(),
     familyName: state.familyName || "",
-    ownerUid: state.ownerUid || null,
+    ...familyAccessMetadata(),
     appVersion: APP_VERSION,
     minSupportedAppVersion: requiredAppVersion(),
     schemaVersion: state.schemaVersion || SCHEMA_VERSION,
