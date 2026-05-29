@@ -876,6 +876,16 @@ button:disabled {
   margin-top: 14px;
 }
 
+.admin-access-actions {
+  display: grid;
+  gap: 6px;
+  min-width: 130px;
+}
+
+.admin-access-actions .btn {
+  width: 100%;
+}
+
 .share-card {
   display: grid;
   align-content: start;

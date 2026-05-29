@@ -6,7 +6,7 @@ const NEW_FAMILY_COMPLETED_KEY = "familieoppdrag.newFamilyCompleted";
 const EXISTING_FAMILY_REDIRECT_KEY = "familieoppdrag.existingFamilyRedirect";
 const APP_UPDATE_SUPPRESS_KEY = "familieoppdrag.suppressUpdateUntil";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "98";
+const APP_VERSION = "99";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -3196,6 +3196,7 @@ function adminFamilyTable() {
             <th>Rev.</th>
             <th>Innhold</th>
             <th>Backup</th>
+            <th>Tilgang</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -3212,11 +3213,24 @@ function adminFamilyTable() {
               <td>${Number(family.cloudRevision) || 0}</td>
               <td>${Number(family.childrenCount) || 0} barn<br>${Number(family.tasksCount) || 0} oppg.<br>${Number(family.completionsCount) || 0} fullf.</td>
               <td>${family.lastBackupAt ? formatMaybeDate(family.lastBackupAt) : "-"}<br>rev. ${Number(family.lastBackupRevision) || 0}</td>
+              <td>${adminFamilyAccessCell(family)}</td>
               <td><span class="pill ${adminFamilyStatusClass(family)}">${escapeText(adminFamilyStatusLabel(family))}</span></td>
             </tr>
           `).join("")}
         </tbody>
       </table>
+    </div>
+  `;
+}
+
+function adminFamilyAccessCell(family) {
+  const code = normalizeFamilyCode(family.familyCode || family.code || "");
+  if (!code) return `<span class="small">Mangler kode<br>Åpne familien i appen for å sende ny status.</span>`;
+  return `
+    <div class="admin-access-actions">
+      <strong>${escapeText(code)}</strong>
+      <button class="btn secondary compact-btn" type="button" data-action="copy-admin-family-code" data-code="${escapeAttr(code)}">Kopier kode</button>
+      <button class="btn secondary compact-btn" type="button" data-action="copy-admin-family-link" data-code="${escapeAttr(code)}">Kopier lenke</button>
     </div>
   `;
 }
@@ -4934,18 +4948,7 @@ async function signInGoogleOwner() {
     const provider = new cloud.GoogleAuthProvider();
     provider.setCustomParameters?.({ prompt: "select_account" });
     const result = await cloud.signInWithPopup(cloud.auth, provider);
-    cloud.authUser = normalizeAuthUser(result.user);
-    registerGoogleAdult(result.user, "owner");
-    if (!state.setupCompleted) {
-      state.updatedAt = new Date().toISOString();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      showToast("Google-eier er klar.");
-      render();
-      return;
-    }
-    saveState();
-    showToast("Google-eier er koblet til familien.");
-    render();
+    await handleGoogleOwnerUser(result.user);
   } catch (error) {
     if (cloud.signInWithRedirect && shouldUseGoogleRedirect(error)) {
       const provider = new cloud.GoogleAuthProvider();
@@ -4956,6 +4959,33 @@ async function signInGoogleOwner() {
     showToast("Google-innlogging feilet.");
     render();
   }
+}
+
+async function handleGoogleOwnerUser(user) {
+  if (!user || user.isAnonymous) return false;
+  cloud.authUser = normalizeAuthUser(user);
+  if (!state.setupCompleted) {
+    const existingData = await existingFamilyDataForGoogleUser(user);
+    const existingFamilyId = existingData?.cloudFamilyId || existingData?.familyId || "";
+    if (existingFamilyId) {
+      cloud.error = "Denne Google-kontoen er allerede koblet til en familie. Bruk 'Har allerede familie' i stedet for å lage ny.";
+      view.setupMode = "existing";
+      showToast("Google-kontoen har allerede en familie.");
+      render();
+      return false;
+    }
+    registerGoogleAdult(user, "owner");
+    state.updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    showToast("Google-eier er klar.");
+    render();
+    return true;
+  }
+  registerGoogleAdult(user, "owner");
+  saveState();
+  showToast("Google-eier er koblet til familien.");
+  render();
+  return true;
 }
 
 async function clearSetupGoogleOwner(options = {}) {
@@ -5064,12 +5094,7 @@ async function signInExistingFamilyWithGoogle() {
 async function connectExistingFamilyWithGoogleUser(user) {
   if (!user || user.isAnonymous) return false;
   cloud.authUser = normalizeAuthUser(user);
-  const linkRef = userFamilyLinkRef(user.uid);
-  const snapshot = linkRef ? await cloud.getDoc(linkRef) : null;
-  let data = snapshot?.exists() ? snapshot.data() : null;
-  if (!data?.cloudFamilyId && !data?.familyId) {
-    data = await findFamilyLinkByOwner(user);
-  }
+  const data = await existingFamilyDataForGoogleUser(user);
   const familyId = data?.cloudFamilyId || data?.familyId || "";
   if (!familyId) {
     cloud.error = "Fant ingen familie koblet til denne Google-kontoen. Bruk familiekode, eller åpne appen én gang som eier på en enhet som allerede er koblet til.";
@@ -5091,6 +5116,17 @@ async function connectExistingFamilyWithGoogleUser(user) {
   showToast("Familien er hentet fra Google-kontoen.");
   render();
   return true;
+}
+
+async function existingFamilyDataForGoogleUser(user) {
+  if (!user?.uid || !cloud.getDoc) return null;
+  const linkRef = userFamilyLinkRef(user.uid);
+  const snapshot = linkRef ? await cloud.getDoc(linkRef) : null;
+  let data = snapshot?.exists() ? snapshot.data() : null;
+  if (!data?.cloudFamilyId && !data?.familyId) {
+    data = await findFamilyLinkByOwner(user);
+  }
+  return data || null;
 }
 
 async function findFamilyLinkByOwner(user) {
@@ -5409,6 +5445,14 @@ function familyLink() {
   return url.toString();
 }
 
+function familyLinkForCode(code) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("familiekode", normalizeFamilyCode(code));
+  return url.toString();
+}
+
 function newFamilyStartLink() {
   const url = new URL(window.location.href);
   url.search = "";
@@ -5456,6 +5500,29 @@ function ensureAdultInvite() {
 
 async function copyFamilyLink() {
   const link = familyLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("Koblingslenke kopiert.");
+  } catch {
+    prompt("Kopier koblingslenken:", link);
+  }
+}
+
+async function copyAdminFamilyCode(code) {
+  const normalized = normalizeFamilyCode(code);
+  if (!normalized) return showToast("Familiekode mangler.");
+  try {
+    await navigator.clipboard.writeText(normalized);
+    showToast("Familiekode kopiert.");
+  } catch {
+    prompt("Kopier familiekoden:", normalized);
+  }
+}
+
+async function copyAdminFamilyLink(code) {
+  const normalized = normalizeFamilyCode(code);
+  if (!normalized) return showToast("Familiekode mangler.");
+  const link = familyLinkForCode(normalized);
   try {
     await navigator.clipboard.writeText(link);
     showToast("Koblingslenke kopiert.");
@@ -6067,6 +6134,12 @@ app.addEventListener("click", (event) => {
   if (action === "copy-admin-summary") {
     copyAdminSummary();
   }
+  if (action === "copy-admin-family-code") {
+    copyAdminFamilyCode(button.dataset.code || "");
+  }
+  if (action === "copy-admin-family-link") {
+    copyAdminFamilyLink(button.dataset.code || "");
+  }
   if (action === "copy-migration-report") {
     copyMigrationReport();
   }
@@ -6315,10 +6388,7 @@ async function initFirebaseSync() {
         if (existingFamilyRedirect) {
           handledOwnerRedirect = await connectExistingFamilyWithGoogleUser(result.user);
         } else {
-          cloud.authUser = normalizeAuthUser(result.user);
-          registerGoogleAdult(result.user, "owner");
-          handledOwnerRedirect = true;
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+          handledOwnerRedirect = await handleGoogleOwnerUser(result.user);
         }
       }
     }).catch((error) => {
@@ -6649,8 +6719,19 @@ async function loadAdminFamilies() {
     const collectionName = adminHealthCollectionName();
     const collectionRef = cloud.collection(cloud.db, collectionName);
     const snapshot = await cloud.getDocs(collectionRef);
+    const familyCodeMap = await loadFamilyCodeIndexMap().catch((error) => {
+      console.warn("Could not enrich admin families with family codes:", error);
+      return new Map();
+    });
     const families = (snapshot.docs || [])
       .map((doc) => ({ id: doc.id, ...(doc.data() || {}) }))
+      .map((family) => {
+        const familyId = family.cloudFamilyId || family.familyId || family.id || "";
+        return {
+          ...family,
+          familyCode: normalizeFamilyCode(family.familyCode || family.code || familyCodeMap.get(familyId) || "")
+        };
+      })
       .sort((a, b) => comparableDateValue(b.lastCloudSyncAt || b.updatedAt) - comparableDateValue(a.lastCloudSyncAt || a.updatedAt));
     cloud.adminFamilies = families;
     cloud.adminSource = collectionName;
@@ -6666,6 +6747,22 @@ async function loadAdminFamilies() {
     showToast("Kunne ikke hente driftsstatus.");
     render();
   }
+}
+
+async function loadFamilyCodeIndexMap() {
+  const result = new Map();
+  if (!cloud.collection || !cloud.getDocs) return result;
+  const codeCollection = APP_CONFIG.cloudSync.codeCollection || "familyCodes";
+  const snapshot = await cloud.getDocs(cloud.collection(cloud.db, codeCollection));
+  (snapshot.docs || []).forEach((doc) => {
+    const data = doc.data() || {};
+    const code = normalizeFamilyCode(data.code || doc.id || "");
+    const ids = [data.cloudFamilyId, data.familyId].filter(Boolean);
+    ids.forEach((familyId) => {
+      if (code && familyId && !result.has(familyId)) result.set(familyId, code);
+    });
+  });
+  return result;
 }
 
 function loadCurrentAdminFamily() {
@@ -6689,6 +6786,7 @@ function adminHealthPayload(extra = {}) {
     familyId: state.familyId || cloudFamilyId(),
     cloudFamilyId: cloudFamilyId(),
     familyName: state.familyName || "",
+    familyCode: normalizeFamilyCode(state.familyCode || ""),
     hasGoogleOwner: familyHasGoogleOwner(),
     adultUsersCount: activeAdultUsers().length,
     appVersion: APP_VERSION,
@@ -6751,6 +6849,7 @@ function adminSummaryText() {
       "",
       `Familie: ${family.familyName || "-"}`,
       `Familie-id: ${family.cloudFamilyId || family.familyId || "-"}`,
+      `Familiekode: ${normalizeFamilyCode(family.familyCode || family.code || "") || "-"}`,
       `Appversjon: ${family.appVersion || "-"}`,
       `Minimum støttet: ${family.minSupportedAppVersion || MIN_SUPPORTED_APP_VERSION}`,
       `Siste synk: ${formatMaybeDate(family.lastCloudSyncAt || family.lastSeenAt || family.updatedAt)}`,
