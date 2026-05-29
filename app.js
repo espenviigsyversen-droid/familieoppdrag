@@ -6,7 +6,7 @@ const NEW_FAMILY_COMPLETED_KEY = "familieoppdrag.newFamilyCompleted";
 const EXISTING_FAMILY_REDIRECT_KEY = "familieoppdrag.existingFamilyRedirect";
 const APP_UPDATE_SUPPRESS_KEY = "familieoppdrag.suppressUpdateUntil";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "99";
+const APP_VERSION = "100";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -4623,9 +4623,15 @@ function deviceProfileLabel() {
 function cloudStatusLabel() {
   if (!cloud.enabled) return "Lokal lagring";
   if (cloud.ready && cloud.pendingSave) return "Lagrer til sky ...";
-  if (cloud.ready) return `Synker med ${cloudFamilyId()}`;
+  if (cloud.ready) return `Synker med ${familyDisplayName()}`;
   if (cloud.error) return "Lokal fallback";
   return cloud.status;
+}
+
+function familyDisplayName() {
+  const name = String(state.familyName || "").trim();
+  if (name) return name;
+  return cloudFamilyId() || "familien";
 }
 
 function cloudStatusClass() {
