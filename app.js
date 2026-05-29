@@ -6,7 +6,7 @@ const NEW_FAMILY_COMPLETED_KEY = "familieoppdrag.newFamilyCompleted";
 const EXISTING_FAMILY_REDIRECT_KEY = "familieoppdrag.existingFamilyRedirect";
 const APP_UPDATE_SUPPRESS_KEY = "familieoppdrag.suppressUpdateUntil";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "100";
+const APP_VERSION = "101";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
@@ -272,6 +272,8 @@ let view = {
 };
 
 let previousView = { mode: view.mode, childId: view.childId, childTab: view.childTab };
+let syncBannerHideTimer = null;
+let syncBannerHideKey = "";
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
@@ -4644,6 +4646,7 @@ function syncStatusBanner() {
   if (view.booting || isSetupPreview()) return "";
   const status = syncBannerStatus();
   if (!status) return "";
+  scheduleSyncBannerAutoHide(status);
   return `
     <aside class="sync-banner ${status.kind}" role="status" aria-live="polite">
       <div class="sync-banner-icon">${status.icon}</div>
@@ -4654,6 +4657,19 @@ function syncStatusBanner() {
       ${status.action ? `<button class="btn secondary" type="button" data-action="${status.action}">${status.actionLabel}</button>` : ""}
     </aside>
   `;
+}
+
+function scheduleSyncBannerAutoHide(status) {
+  if (!status.autoHideMs || !status.key) return;
+  if (syncBannerHideKey === status.key) return;
+  if (syncBannerHideTimer) clearTimeout(syncBannerHideTimer);
+  syncBannerHideKey = status.key;
+  syncBannerHideTimer = setTimeout(() => {
+    if (syncBannerHideKey !== status.key) return;
+    view.dismissedSyncBannerKey = status.key;
+    syncBannerHideTimer = null;
+    render();
+  }, status.autoHideMs);
 }
 
 function syncBannerStatus() {
@@ -4708,23 +4724,31 @@ function syncBannerStatus() {
     };
   }
   if (cloud.staleWriteBlockedAt && isRecentEvent(cloud.staleWriteBlockedAt, 10)) {
+    const key = `stale:${new Date(cloud.staleWriteBlockedAt).getTime()}`;
+    if (view.dismissedSyncBannerKey === key) return null;
     return {
+      key,
       kind: "warning",
       icon: "!",
       title: "Gammel lokal data ble stoppet",
       text: cloud.staleWriteMessage || "Nyeste familiedata er hentet fra skyen.",
       action: "force-cloud-fetch",
-      actionLabel: "Sjekk igjen"
+      actionLabel: "Sjekk igjen",
+      autoHideMs: 7000
     };
   }
   if (cloud.mergeLastAt && isRecentEvent(cloud.mergeLastAt, 10)) {
+    const key = `merge:${new Date(cloud.mergeLastAt).getTime()}`;
+    if (view.dismissedSyncBannerKey === key) return null;
     return {
+      key,
       kind: "done",
       icon: "✓",
       title: "Offline-endringer ble flettet inn",
       text: cloud.mergeLastSummary || "Lokale endringer er tatt vare på og synkes videre.",
       action: "force-cloud-fetch",
-      actionLabel: "Sjekk sky"
+      actionLabel: "Sjekk sky",
+      autoHideMs: 7000
     };
   }
   return null;
