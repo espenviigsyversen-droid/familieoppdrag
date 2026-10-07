@@ -4,6 +4,30 @@ En enkel familieapp for oppgaver, stjerner og belønninger. Appen kan kjøres so
 
 Se `FIREBASE_PLAN.md` for foreslått flerfamilie-struktur, sikkerhetsmodell og neste steg mot innlogging.
 
+## Lokal endring: versjon 102
+
+Lagringsvern: feil i nettleserens lagring stopper ikke visning eller sky-kø.
+Hovedtilstanden prioriteres foran én valgfri lokal backup. Ved oppstart reduseres
+eldre lister med flere backupkopier til den nyeste. Skybackupene er uendret.
+Innstillinger viser lokal skrivefeil og anslått skydokumentstørrelse; voksne
+varsles over 70 prosent av 1 MiB. For store skydokumenter får egen feilmelding.
+
+Se `LAGRING_OG_VEKST.md` for analyse, begrensninger og forslag som krever godkjenning.
+Ingen automatisk arkivering eller endring av Firestore-regler er gjort.
+
+Kontroll før eventuell utgivelse:
+
+```powershell
+node --check app.js
+node --check service-worker.js
+node --test tests/storage.test.cjs
+```
+
+Hold `APP_VERSION`, versjonsparametrene i `index.html` og cache-versjonen i
+`service-worker.js` like. Runtime-filer i denne endringen er `app.js`,
+`styles.css`, `index.html` og `service-worker.js`. Tester og analysedokumentet
+er prosjektfiler. Publisering gjøres bare etter eiers beskjed.
+
 ## Før appen tas i bruk av en ny familie
 
 1. Opprett et eget Firebase-prosjekt.

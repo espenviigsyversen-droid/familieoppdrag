@@ -6,10 +6,12 @@ const NEW_FAMILY_COMPLETED_KEY = "familieoppdrag.newFamilyCompleted";
 const EXISTING_FAMILY_REDIRECT_KEY = "familieoppdrag.existingFamilyRedirect";
 const APP_UPDATE_SUPPRESS_KEY = "familieoppdrag.suppressUpdateUntil";
 const PIN_HASH = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // 1234
-const APP_VERSION = "101";
+const APP_VERSION = "102";
 const MIN_SUPPORTED_APP_VERSION = 85;
 const SCHEMA_VERSION = 2;
 const ADULT_INVITE_LIFETIME_DAYS = 7;
+const FIRESTORE_DOCUMENT_LIMIT = 1024 * 1024;
+const localStorageStatus = { writeFailed: false, quotaExceeded: false };
 const DEVELOPER_ADMIN_EMAILS = ["espen.viig.syversen@gmail.com"];
 const APP_CONFIG = {
   appName: "Familieoppdrag",
@@ -232,13 +234,15 @@ const STARTER_PACKAGES = [
   }
 ];
 
+compactLocalCloudBackups();
 let state = loadState();
+const startupProfile = localStorageGet(DEVICE_PROFILE_KEY) || "home";
 let view = {
   booting: true,
   bootMessage: "Henter siste versjon og familiedata",
-  mode: localStorage.getItem(DEVICE_PROFILE_KEY) || "home",
-  childId: localStorage.getItem(DEVICE_PROFILE_KEY)?.startsWith("child:")
-    ? localStorage.getItem(DEVICE_PROFILE_KEY).replace("child:", "")
+  mode: startupProfile,
+  childId: startupProfile.startsWith("child:")
+    ? startupProfile.replace("child:", "")
     : null,
   childTab: "tasks",
   adultTab: "overview",
@@ -278,33 +282,120 @@ let syncBannerHideKey = "";
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
+function isStorageQuotaError(error) {
+  return error?.name === "QuotaExceededError" || error?.name === "NS_ERROR_DOM_QUOTA_REACHED"
+    || error?.code === 22 || error?.code === 1014;
+}
+
+function localStorageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function localStorageSet(key, value, optional = false) {
+  try {
+    window.localStorage.setItem(key, value);
+    return { ok: true };
+  } catch (error) {
+    if (!optional) {
+      localStorageStatus.writeFailed = true;
+      localStorageStatus.quotaExceeded = isStorageQuotaError(error);
+    }
+    return { ok: false, error };
+  }
+}
+
+function localStorageRemove(key) {
+  try {
+    window.localStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function persistLocalState() {
+  let result;
+  try {
+    const serialized = JSON.stringify(state);
+    result = localStorageSet(STORAGE_KEY, serialized, true);
+    if (!result.ok && isStorageQuotaError(result.error)) {
+      // Only the disposable backup cache may be evicted, never other apps' data.
+      localStorageRemove(CLOUD_BACKUP_KEY);
+      result = localStorageSet(STORAGE_KEY, serialized, true);
+    }
+  } catch (error) {
+    result = { ok: false, error };
+  }
+  localStorageStatus.writeFailed = !result.ok;
+  localStorageStatus.quotaExceeded = !result.ok && isStorageQuotaError(result.error);
+  return result.ok;
+}
+
+function readLocalCloudBackups() {
+  try {
+    const backups = JSON.parse(localStorageGet(CLOUD_BACKUP_KEY) || "[]");
+    return Array.isArray(backups) && backups.every((backup) => backup && isStoredState(backup.state)) ? backups : [];
+  } catch {
+    return [];
+  }
+}
+
+function compactLocalCloudBackups() {
+  try {
+    const raw = JSON.parse(localStorageGet(CLOUD_BACKUP_KEY) || "[]");
+    if (!Array.isArray(raw) || raw.length <= 1) return;
+    // The old format is newest first; timestamps also handle imported ordering.
+    const newest = readLocalCloudBackups().sort((a, b) =>
+      (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0))[0];
+    if (newest) localStorageSet(CLOUD_BACKUP_KEY, JSON.stringify([newest]), true);
+  } catch {
+    // Corrupt or inaccessible storage is treated as missing, not deleted.
+  }
+}
+
+function isStoredState(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && Array.isArray(value.children) && Array.isArray(value.tasks)
+    && ["completions", "transactions", "history", "rewards", "redemptions", "badges",
+      "adultUsers", "familyDevices", "inviteCodes", "levels"]
+      .every((key) => value[key] === undefined || Array.isArray(value[key]));
+}
+
 function loadState() {
   if (newFamilySetupRequested()) {
     const completedKey = newFamilyLinkKey();
-    const rawState = localStorage.getItem(STORAGE_KEY);
+    const rawState = localStorageGet(STORAGE_KEY);
     let setupAlreadyCompleted = false;
+    let validSavedState = false;
     try {
-      setupAlreadyCompleted = Boolean(rawState && JSON.parse(rawState).setupCompleted);
+      const saved = rawState && JSON.parse(rawState);
+      validSavedState = Boolean(isStoredState(saved));
+      setupAlreadyCompleted = Boolean(validSavedState && saved.setupCompleted);
     } catch {
       setupAlreadyCompleted = false;
     }
-    if (localStorage.getItem(NEW_FAMILY_COMPLETED_KEY) === completedKey && setupAlreadyCompleted) {
+    if (localStorageGet(NEW_FAMILY_COMPLETED_KEY) === completedKey && setupAlreadyCompleted) {
       clearNewFamilyUrl();
     } else {
       const resetKey = `${APP_VERSION}:${completedKey}`;
       if (sessionStorage.getItem(NEW_FAMILY_SESSION_KEY) !== resetKey) {
-        localStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem(DEVICE_PROFILE_KEY);
+        if (validSavedState) localStorageRemove(STORAGE_KEY);
+        localStorageRemove(DEVICE_PROFILE_KEY);
         sessionStorage.setItem(NEW_FAMILY_SESSION_KEY, resetKey);
       }
     }
   }
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = localStorageGet(STORAGE_KEY);
   if (raw) {
     try {
-      return normalizeLocalState(JSON.parse(raw), true);
+      const saved = JSON.parse(raw);
+      if (isStoredState(saved)) return normalizeLocalState(saved, true);
     } catch {
-      localStorage.removeItem(STORAGE_KEY);
+      // Leave the original value available for manual recovery.
     }
   }
   return normalizeLocalState({
@@ -498,7 +589,7 @@ function saveState() {
   state.appVersion = APP_VERSION;
   state.minSupportedAppVersion = Math.max(Number(state.minSupportedAppVersion) || 0, MIN_SUPPORTED_APP_VERSION);
   state.updatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistLocalState();
   ensureCloudFamilyPath();
   queueCloudSave();
 }
@@ -1524,6 +1615,7 @@ function renderAdult() {
         return `<button class="tab ${view.adultTab === id ? "active" : ""}" data-action="adult-tab" data-tab="${id}">${label}</button>`;
       }).join("")}
     </nav>
+    ${cloudSizeWarning()}
     ${adultTabContent()}
   `;
 }
@@ -2284,6 +2376,10 @@ function adultHistory() {
 }
 
 function adultSettings() {
+  return `${storageSettingsStatus()}${adultSettingsContent()}`;
+}
+
+function adultSettingsContent() {
   if (view.settingsPage === "family") return settingsFamily();
   if (view.settingsPage === "devices") return settingsDevices();
   if (view.settingsPage === "security") return settingsSecurity();
@@ -2304,6 +2400,64 @@ function adultSettings() {
 
 function settingsBackButton(page = "menu") {
   return `<button class="btn secondary" data-action="settings-page" data-page="${escapeAttr(page)}">Tilbake</button>`;
+}
+
+function estimatedFirestoreValueBytes(value) {
+  if (value == null || typeof value === "boolean") return 1;
+  if (typeof value === "number" || value instanceof Date) return 8;
+  if (typeof value === "string") return new TextEncoder().encode(value).length + 1;
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + estimatedFirestoreValueBytes(item), 0);
+  return 32 + Object.entries(value).reduce((sum, [key, item]) =>
+    sum + estimatedFirestoreValueBytes(key) + estimatedFirestoreValueBytes(item), 0);
+}
+
+function estimatedCloudDocumentSize() {
+  // Firestore storage-size rules, including the envelope and document path.
+  // Server-only fields retained by merge writes are not known on every device.
+  const payload = {
+    familyId: state.familyId || "local-family",
+    familyName: state.familyName || "",
+    state,
+    ...familyAccessMetadata(),
+    appVersion: APP_VERSION,
+    minSupportedAppVersion: requiredAppVersion(),
+    cloudRevision: (Number(state.cloudRevision) || 0) + 1,
+    updatedAt: new Date()
+  };
+  const path = cloud.docRef?.path || cloudPathLabel();
+  const bytes = estimatedFirestoreValueBytes(payload) + 16
+    + path.split("/").reduce((sum, part) => sum + estimatedFirestoreValueBytes(part), 0);
+  return { bytes, percent: bytes / FIRESTORE_DOCUMENT_LIMIT * 100 };
+}
+
+function storageSettingsStatus() {
+  const size = estimatedCloudDocumentSize();
+  const localMessage = localStorageStatus.quotaExceeded
+    ? "Nettleserens lagring er full. Appen virker, men kan ikke startes uten nett på denne enheten."
+    : "Nettleserens lagring er utilgjengelig. Appen virker, men endringer kan ikke lagres lokalt på denne enheten.";
+  return `
+    <div class="storage-status" aria-live="polite">
+      ${localStorageStatus.writeFailed ? `<p class="small">${localMessage}</p>` : ""}
+      <p class="small">Skydokument: ca. ${size.percent.toFixed(1).replace(".", ",")} % av 1 MiB (${Math.round(size.bytes / 1024)} KiB).</p>
+    </div>
+  `;
+}
+
+function cloudSizeWarning() {
+  if (!cloud.enabled || estimatedCloudDocumentSize().percent <= 70) return "";
+  return `<p class="storage-size-warning" role="status"><strong>Familiedata nærmer seg lagringsgrensen i skyen.</strong>
+    Kontakt administrator for å planlegge utvidet lagring. Ikke slett historikk for å frigjøre plass.</p>`;
+}
+
+function cloudWriteErrorMessage(error) {
+  const message = error?.message || "Kunne ikke lagre i Firestore";
+  const documentSizeError = /(?:document|entity)/i.test(message)
+    && /too (?:large|big)|larger than|size[\s\S]*exceed|exceed[\s\S]*(?:size|bytes)/i.test(message);
+  const fieldSizeError = /(?:1048576|1048487|1\s*MiB)/i.test(message)
+    && /(?:field|property|payload|document)/i.test(message) && /(?:size|exceed|large)/i.test(message);
+  return documentSizeError || fieldSizeError
+    ? "Familiedata er for store for skydokumentets lagringsgrense (1 MiB). Endringene er ikke lagret i skyen. Behold appen åpen, eksporter data og kontakt administrator."
+    : message;
 }
 
 function settingsMenu() {
@@ -2624,9 +2778,11 @@ function settingsBackup() {
         <button class="btn secondary" data-action="export-data">Eksporter data</button>
         <button class="btn secondary" data-action="choose-import">Importer data</button>
         <button class="btn secondary" data-action="list-cloud-backups">Hent skybackuper</button>
+        <button class="btn secondary" data-action="export-local-backup" ${readLocalCloudBackups().length ? "" : "disabled"}>Last ned lokal backup</button>
       </div>
       <input class="visually-hidden" id="import-file" type="file" accept="application/json,.json" data-import-file>
       <p class="small">Import erstatter dataene på denne enheten. Ta alltid eksport først.</p>
+      <p class="small">En lokal backup kan lastes ned og gjenopprettes med Importer data.</p>
       <div class="backup-restore-box">
         <div class="section-title compact-title">
           <div>
@@ -4014,9 +4170,9 @@ async function completeFirstSetup(form) {
   view.setupStep = 0;
   view.setupDraft = null;
   queueScrollTop();
-  localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+  localStorageSet(DEVICE_PROFILE_KEY, "home");
   if (newFamilySetupRequested()) {
-    localStorage.setItem(NEW_FAMILY_COMPLETED_KEY, newFamilyLinkKey());
+    localStorageSet(NEW_FAMILY_COMPLETED_KEY, newFamilyLinkKey());
     clearNewFamilyUrl();
   }
   saveState();
@@ -4089,7 +4245,7 @@ async function importStateFile(file) {
     view.creatingReward = false;
     view.creatingChild = false;
     view.gate = null;
-    localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+    localStorageSet(DEVICE_PROFILE_KEY, "home");
     saveState();
     showToast("Backup er importert.");
     render();
@@ -4615,7 +4771,7 @@ async function hashPin(pin) {
 }
 
 function deviceProfileLabel() {
-  const profile = localStorage.getItem(DEVICE_PROFILE_KEY);
+  const profile = localStorageGet(DEVICE_PROFILE_KEY);
   if (!profile || profile === "home") return "Profilvalg";
   if (profile === "adult") return "Voksen/familieoversikt";
   if (profile.startsWith("child:")) return getChild(profile.replace("child:", ""))?.name || "Ukjent";
@@ -5006,7 +5162,7 @@ async function handleGoogleOwnerUser(user) {
     }
     registerGoogleAdult(user, "owner");
     state.updatedAt = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistLocalState();
     showToast("Google-eier er klar.");
     render();
     return true;
@@ -5029,7 +5185,7 @@ async function clearSetupGoogleOwner(options = {}) {
     });
   }
   state.updatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistLocalState();
   return true;
 }
 
@@ -5247,6 +5403,8 @@ function syncDiagnosisText() {
   return [
     `App: ${APP_CONFIG.appName}`,
     `Versjon: ${APP_VERSION}`,
+    `Lokal lagring: ${localStorageStatus.writeFailed ? "skriving feiler" : "tilgjengelig"}`,
+    `Skydokument (anslag): ${estimatedCloudDocumentSize().bytes} byte / ${FIRESTORE_DOCUMENT_LIMIT} byte`,
     `Minimum støttet versjon: ${requiredAppVersion()}`,
     `Versjon kan lagre: ${isAppVersionSupported() ? "ja" : "nei"}`,
     `Versjonssperre: ${cloud.versionBlocked ? cloud.versionBlockedMessage || "aktiv" : "nei"}`,
@@ -5350,7 +5508,7 @@ async function migrateCloudFamilyPath() {
     error: "",
     appVersion: APP_VERSION
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistLocalState();
   const migratedState = normalizeLocalState({
     ...state,
     familyId: toFamilyId,
@@ -5394,7 +5552,7 @@ async function migrateCloudFamilyPath() {
       updatedAt: cloud.serverTimestamp ? cloud.serverTimestamp() : now
     }, { merge: true });
     state = migratedState;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistLocalState();
     setCloudDocRef(toFamilyId);
     cloud.applyingRemote = false;
     subscribeCloudState();
@@ -5417,7 +5575,7 @@ async function migrateCloudFamilyPath() {
       error: message,
       appVersion: APP_VERSION
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistLocalState();
     queueCloudSave();
     showToast("Flytting til ny sky-sti feilet.");
     render();
@@ -5425,7 +5583,7 @@ async function migrateCloudFamilyPath() {
 }
 
 function setDeviceProfile(profile) {
-  localStorage.setItem(DEVICE_PROFILE_KEY, profile);
+  localStorageSet(DEVICE_PROFILE_KEY, profile);
   showToast("Standardprofil er lagret for denne enheten.");
 }
 
@@ -5654,8 +5812,8 @@ async function startOverLocal(form) {
     cloud.unsubscribe = null;
   }
 
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(DEVICE_PROFILE_KEY);
+  localStorageRemove(STORAGE_KEY);
+  localStorageRemove(DEVICE_PROFILE_KEY);
   if ("caches" in window) {
     await caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key)))).catch(() => {});
   }
@@ -5704,7 +5862,7 @@ function connectDevice(profile) {
 }
 
 function requiresPinForHome() {
-  const profile = localStorage.getItem(DEVICE_PROFILE_KEY);
+  const profile = localStorageGet(DEVICE_PROFILE_KEY);
   return view.mode === "child" && profile === `child:${view.childId}` && !view.adultUnlocked;
 }
 
@@ -6133,6 +6291,9 @@ app.addEventListener("click", (event) => {
   if (action === "export-cloud-backup") {
     exportCloudBackup(backupId);
   }
+  if (action === "export-local-backup") {
+    exportLocalCloudBackup();
+  }
   if (action === "close-restore-backup") {
     view.restoreBackupId = null;
     render();
@@ -6442,7 +6603,7 @@ async function initFirebaseSync() {
       }, reject);
     });
     if (auth.currentUser && !auth.currentUser.isAnonymous && state.setupCompleted && registerGoogleAdult(auth.currentUser, "owner")) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      persistLocalState();
     }
 
     await resolvePendingFamilyCode();
@@ -6469,7 +6630,7 @@ async function initFirebaseSync() {
           cloud.mergeLastSummary = `Oppstart: ${mergeResult.summary}`;
           cloud.pendingSave = true;
         }
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        persistLocalState();
         setCloudDocRef();
       } finally {
         cloud.applyingRemote = false;
@@ -6486,7 +6647,7 @@ async function initFirebaseSync() {
     if (cloud.pendingSave) queueCloudSave();
   } catch (error) {
     cloud.ready = false;
-    cloud.error = error?.message || "Kunne ikke koble til Firestore";
+    cloud.error = cloudWriteErrorMessage(error);
     console.warn("Firestore sync unavailable:", error);
   }
 }
@@ -6531,7 +6692,7 @@ async function resolvePendingFamilyCode() {
   cloud.familyCodeLookupStatus = `fant ${familyId}`;
   cloud.familyCodeLookupError = "";
   setCloudDocRef(familyId);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistLocalState();
   return familyId;
 }
 
@@ -6606,7 +6767,7 @@ async function loadFamilyFromCloud(familyId, options = {}) {
   });
   cloud.remoteRevision = Number(state.cloudRevision) || 0;
   cloud.lastFetchedAt = now;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistLocalState();
   setCloudDocRef(familyId);
   cloud.applyingRemote = false;
   subscribeCloudState();
@@ -6990,7 +7151,7 @@ async function restoreCloudBackup(backupId, scope = "full") {
     cloud.lastFetchedAt = now;
     cloud.backupRestoreStatus = `Gjenopprettet ${restoreScopeLabel(scope)} fra ${backupId} som rev. ${nextRevision}.`;
     view.restoreBackupId = null;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistLocalState();
     cloud.applyingRemote = false;
     await writeFamilyCodeIndex().catch((error) => console.warn("Family code index write failed after restore:", error));
     showToast("Backup er gjenopprettet.");
@@ -6998,7 +7159,7 @@ async function restoreCloudBackup(backupId, scope = "full") {
   } catch (error) {
     cloud.applyingRemote = false;
     cloud.backupRestoreStatus = "Gjenoppretting feilet.";
-    cloud.backupRestoreError = error?.message || "Kunne ikke gjenopprette backup.";
+    cloud.backupRestoreError = cloudWriteErrorMessage(error);
     showToast("Kunne ikke gjenopprette backup.");
     render();
   }
@@ -7108,20 +7269,28 @@ async function fetchLatestCloudState() {
 }
 
 function backupCloudState(reason, snapshotState) {
+  // Always reserve space for the current state before attempting an optional copy.
+  if (!persistLocalState()) return;
   try {
-    const backups = JSON.parse(localStorage.getItem(CLOUD_BACKUP_KEY) || "[]");
-    backups.unshift({
+    const backup = {
       reason,
       createdAt: new Date().toISOString(),
       familyId: snapshotState?.familyId || state.familyId || "",
       cloudFamilyId: snapshotState?.cloudFamilyId || state.cloudFamilyId || "",
       cloudRevision: Number(snapshotState?.cloudRevision) || 0,
       state: snapshotState
-    });
-    localStorage.setItem(CLOUD_BACKUP_KEY, JSON.stringify(backups.slice(0, 5)));
+    };
+    localStorageSet(CLOUD_BACKUP_KEY, JSON.stringify([backup]), true);
   } catch (error) {
     console.warn("Could not write local cloud backup:", error);
   }
+}
+
+function exportLocalCloudBackup() {
+  const backup = readLocalCloudBackups()[0];
+  if (!backup) return showToast("Ingen lokal backup tilgjengelig.");
+  downloadJson({ state: backup.state, exportedAt: new Date().toISOString(), reason: backup.reason },
+    `familieoppdrag-lokal-backup-${dateKey()}.json`);
 }
 
 function applyNewerCloudState(remoteState, remoteRevision, reason) {
@@ -7148,7 +7317,7 @@ function applyNewerCloudState(remoteState, remoteRevision, reason) {
     cloud.mergeLastSummary = mergeResult.summary;
     cloud.pendingSave = true;
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistLocalState();
   cloud.applyingRemote = false;
   setCloudDocRef();
   if (mergeResult.changed) queueCloudSave();
@@ -7282,7 +7451,7 @@ function subscribeCloudState() {
       backupCloudState("snapshot-before-remote-apply", state);
       remoteState.lastCloudSyncAt = cloud.lastFetchedAt;
       state = remoteState;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      persistLocalState();
       cloud.applyingRemote = false;
       ensureCloudFamilyPath();
       render();
@@ -7297,7 +7466,7 @@ function ensureCloudFamilyPath() {
   setCloudDocRef();
   subscribeCloudState();
   writeCloudState().catch((error) => {
-    cloud.error = error?.message || "Kunne ikke lagre i Firestore";
+    cloud.error = cloudWriteErrorMessage(error);
     console.warn("Firestore family switch failed:", error);
     render();
   });
@@ -7373,7 +7542,7 @@ async function flushCloudSave() {
     render();
   } catch (error) {
     cloud.pendingSave = true;
-    cloud.error = error?.message || "Kunne ikke lagre i Firestore";
+    cloud.error = cloudWriteErrorMessage(error);
     console.warn("Firestore save failed:", error);
     render();
   }
@@ -7446,7 +7615,7 @@ async function writeCloudState() {
         cloud.backupStatus = `Lagret ${result.backupId}`;
         cloud.backupError = "";
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      persistLocalState();
     }
   } else {
     const snapshot = cloud.getDoc ? await cloud.getDoc(cloud.docRef) : null;
@@ -7467,7 +7636,7 @@ async function writeCloudState() {
       cloudRevision: nextRevision,
       lastCloudSyncAt: now
     }, true);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    persistLocalState();
     await cloud.setDoc(cloud.docRef, {
       familyId: state.familyId || "local-family",
       familyName: state.familyName || "",
@@ -7598,12 +7767,12 @@ function validateStartupProfile() {
   if (view.mode === "child" && getChild(childId)?.active === false) {
     view.mode = "home";
     view.childId = null;
-    localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+    localStorageSet(DEVICE_PROFILE_KEY, "home");
   }
   if (view.mode === "child" && !getChild(view.childId)) {
     view.mode = "home";
     view.childId = null;
-    localStorage.setItem(DEVICE_PROFILE_KEY, "home");
+    localStorageSet(DEVICE_PROFILE_KEY, "home");
   }
   if (view.mode === "adult") {
     view.mode = "adult";

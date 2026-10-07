@@ -1996,3 +1996,15 @@ th {
     padding: 10px 8px;
   }
 }
+.storage-status {
+  margin-bottom: 16px;
+}
+
+.storage-size-warning {
+  padding: 12px;
+  border: 1px solid #e0bc56;
+  border-radius: 8px;
+  background: #fff7dd;
+  color: #5c4510;
+  overflow-wrap: anywhere;
+}
